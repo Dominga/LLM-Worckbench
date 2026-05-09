@@ -1,0 +1,37 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.crt
+secrets/
+credentials.json
+
+# Go build output
+llm-workbench/build/bin/
+*.test
+*.out
+*.prof
+
+# Node
+node_modules/
+llm-workbench/frontend/dist/
+
+# Logs / runtime
+*.log
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude / agent state
+.claude/
