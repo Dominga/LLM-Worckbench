@@ -35,3 +35,7 @@ Thumbs.db
 
 # Claude / agent state
 .claude/
+
+# Design handoff bundles — duplicate of unpacked sources in
+# Design/llm-workshop/.
+Design/*.zip
