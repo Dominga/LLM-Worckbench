@@ -305,7 +305,11 @@ export function ChatTab({
       return;
     }
 
-    if (!healthy) return;
+    // Don't pre-gate on `healthy`. /health probes can flip false while
+    // llama-server is busy crunching a fat prompt (e.g. after a
+    // read_file injected a big file), but the chat endpoint itself
+    // still accepts requests. If something is actually wrong the
+    // backend will emit chat:error and the listener clears streaming.
 
     // Promote ad-hoc chats into a persisted session whenever a project
     // is active. This way the very first message a user types ends up
@@ -826,21 +830,25 @@ export function ChatTab({
               ) : (
                 <button
                   onClick={send}
-                  disabled={(!healthy && !prompt.trim().toLowerCase().startsWith('/search')) || !prompt.trim()}
+                  disabled={!prompt.trim()}
                   style={{
                     width: 28,
                     height: 28,
-                    background: !healthy || !prompt.trim() ? V5.surface2 : V5.accent,
+                    background: !prompt.trim() ? V5.surface2 : V5.accent,
                     color: '#fff',
                     border: 'none',
                     borderRadius: 7,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: !healthy || !prompt.trim() ? 'not-allowed' : 'pointer',
-                    opacity: !healthy || !prompt.trim() ? 0.5 : 1,
+                    cursor: !prompt.trim() ? 'not-allowed' : 'pointer',
+                    opacity: !prompt.trim() ? 0.5 : 1,
                   }}
-                  title={healthy ? 'Send (⌘⏎)' : 'Server not healthy'}
+                  title={
+                    healthy
+                      ? 'Send (⌘⏎)'
+                      : 'Server probe is currently unhealthy — request may still succeed.'
+                  }
                 >
                   <IconSend size={12} />
                 </button>

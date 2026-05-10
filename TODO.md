@@ -196,6 +196,57 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
 
 ## Tech debt / nice-to-have
 
+### TD11 — Send button stuck disabled after agent tool call ✓ partial fix
+
+**Two probable causes identified, both addressed:**
+
+1. **Panic in agent goroutine.** chat.go wrapped the session-stream goroutine
+   in `defer { recover; finalize }` so a panic in any tool handler / vec
+   query / persist path still terminates the UI side (`chat:done` or
+   `chat:error` always fires). Without this, the JS listener never gets a
+   terminal event and `streaming=true` was stuck forever.
+2. **`!healthy` pre-gate.** After a `read_file` injected a fat file, the
+   chat profile becomes CPU-bound for prompt eval; `/health` probes time
+   out; `activeStatus.healthy` flips false; UI greyed the send button and
+   `send()` early-returned. Both gates removed — UI now lets the request
+   fly even when the probe is unhealthy, since the chat endpoint usually
+   still accepts the request. Tooltip surfaces the probe state.
+
+**Still TODO if it recurs:**
+
+- Frontend watchdog (no event in N seconds → force `streaming=false` with
+  a "stalled, please retry" toast).
+- Debug logging of `streaming`/`streamIdRef` transitions.
+
+Reported once: in `Agent` mode, after the model called `read_file`, the chat
+input went into a stuck state — send icon greyed out, Ctrl+Enter did nothing.
+Recovered only by restarting the app.
+
+**Likely cause:** `streaming=true` in `ChatTab` never flipped back. Suspects:
+
+1. `chat:done:<id>` / `chat:error:<id>` event missed (delivered before the
+   handler was wired? streamId mismatch? Wails listener race?). `cleanup()`
+   never runs → `setStreaming(false)` never called.
+2. Agent loop returned without an error AND without ever hitting
+   `c.finalize` (some code path short-circuits). Worth auditing
+   `streamWithTools` / `streamWithReAct` for early returns that bypass the
+   wrapping goroutine's `finalize` call.
+3. Approval modal opened but `RespondToApproval` never completed; loop
+   parked on `<-ch`. ctx.Done should unblock but isn't if streamCtx never
+   gets cancelled.
+
+**Fix direction (when reproduced):**
+
+- Add a watchdog: if no event lands within N seconds of the request,
+  ChatTab auto-resets `streaming`.
+- Always emit `chat:done` in a defer (`go func(){ defer c.finalize(...) }`
+  pattern) so any early return still terminates the UI side.
+- Log every state transition (`streaming`, `streamIdRef.current`) when
+  debug build is on.
+
+**Files:** `chat.go` (finalize-defer), `frontend/src/tabs/ChatTab.tsx`
+(watchdog timer, debug logging).
+
 ### TD10 — Visualise model thinking / long-running activity
 
 When the model "thinks" silently (Qwen3 emits `<think>…</think>` blocks before

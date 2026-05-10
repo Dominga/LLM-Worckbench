@@ -189,6 +189,21 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			toolCalls   []ToolCallRecord
 			err         error
 		)
+		// finalize MUST fire so the frontend's chat:done / chat:error
+		// listener clears the streaming flag. defer + closure-capture
+		// of the latest err/fullContent means a panic, an early
+		// return, or any unexpected exit still releases the UI.
+		defer func() {
+			if r := recover(); r != nil {
+				if err == nil {
+					err = fmt.Errorf("internal panic: %v", r)
+				}
+				if c.ctx != nil {
+					wruntime.LogErrorf(c.ctx, "chat goroutine panic: %v", r)
+				}
+			}
+			c.finalize(streamID, fullContent, err)
+		}()
 		if useAgent {
 			ac := c.agentX(projectID)
 			ac.ProjectID = projectID
@@ -238,7 +253,7 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 				wruntime.LogErrorf(c.ctx, "persist assistant msg: %v", persistErr)
 			}
 		}
-		c.finalize(streamID, fullContent, err)
+		// finalize is invoked by the defer above so we don't double-emit.
 	}()
 	return StreamHandle{StreamID: streamID}, nil
 }
