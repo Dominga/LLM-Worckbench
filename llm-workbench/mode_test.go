@@ -105,7 +105,7 @@ context = "rag-auto"
 	// Builtin chat-only should still be present.
 	hasChatOnly := false
 	for _, m := range list {
-		if m.ID == "chat-only" {
+		if m.ID == "chat" {
 			hasChatOnly = true
 		}
 	}
@@ -152,20 +152,16 @@ approval = "always"
 }
 
 func TestModeServiceResolveFallback(t *testing.T) {
+	// Isolate XDG so the test doesn't see whatever the developer has
+	// seeded in their real config dir.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	prs := &ProjectService{
 		projects: []Project{{ID: "p", Path: t.TempDir()}},
 	}
 	svc := NewModeService(prs)
 	got := svc.Resolve("p", "does-not-exist")
-	if got.ID != "chat-only" {
-		t.Errorf("fallback id = %q, want chat-only", got.ID)
-	}
-	got = svc.Resolve("p", "agent")
-	if got.ID != "agent" {
-		t.Errorf("resolve agent failed, got %q", got.ID)
-	}
-	if !strings.Contains(got.SystemPrompt, "agent") {
-		t.Errorf("agent SystemPrompt empty/wrong")
+	if got.ID != "chat" {
+		t.Errorf("fallback id = %q, want chat", got.ID)
 	}
 }
 

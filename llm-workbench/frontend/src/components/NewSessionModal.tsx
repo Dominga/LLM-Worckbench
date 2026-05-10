@@ -29,7 +29,7 @@ export function NewSessionModal({ opened, activeProjectId, onClose, onCreate }: 
   // the call is in flight or when there's no project context.
   const [modes, setModes] = useState<Mode[]>(MODES);
   const [title, setTitle] = useState('New chat');
-  const [modeId, setModeId] = useState<string>(modes[0]?.id ?? 'chat-only');
+  const [modeId, setModeId] = useState<string>(modes[0]?.id ?? 'chat');
   const [paramVals, setParamVals] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -116,7 +116,7 @@ export function NewSessionModal({ opened, activeProjectId, onClose, onCreate }: 
           description="Mode drives system prompt, tool whitelist, and approval policy."
           data={modes.map((m) => ({ value: m.id, label: m.name }))}
           value={modeId}
-          onChange={(v) => setModeId(v ?? modes[0]?.id ?? 'chat-only')}
+          onChange={(v) => setModeId(v ?? modes[0]?.id ?? 'chat')}
           allowDeselect={false}
           leftSection={
             <span

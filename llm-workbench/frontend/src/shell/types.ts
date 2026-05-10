@@ -82,17 +82,12 @@ export type ModeParam = {
 };
 
 // Static fallback used before the backend ListModes call resolves and
-// for places that don't pass a project context. Frontend should prefer
-// the backend list once available — this is a shape mirror only.
+// for places that don't pass a project context. Just the builtin
+// `chat` is shipped in-binary; research / agent / auto-edit are
+// seeded into `~/.config/llm-workbench/modes/` on first launch.
 export const MODES: Mode[] = [
-  { id: 'chat-only', name: 'Chat only', color: '#94a3b8', source: 'builtin',
-    desc: 'Plain conversation. No tools, no RAG injection.' },
-  { id: 'research', name: 'Research', color: '#22c55e', source: 'builtin',
-    desc: 'Read-only investigation. Searches and reads, never writes.' },
-  { id: 'agent', name: 'Agent', color: '#3b82f6', source: 'builtin',
-    desc: 'Full toolset. User confirms each write via a diff modal.' },
-  { id: 'auto-edit', name: 'Auto-edit', color: '#f59e0b', source: 'builtin',
-    desc: 'Full toolset, no per-edit confirmation. Reverts via git snapshot.' },
+  { id: 'chat', name: 'Chat', color: '#94a3b8', source: 'builtin',
+    desc: 'Plain conversation. No tools, no system prompt, no RAG injection.' },
 ];
 
 export const MODE_BY_ID: Record<string, Mode> = Object.fromEntries(MODES.map((m) => [m.id, m]));

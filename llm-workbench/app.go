@@ -87,6 +87,14 @@ func (a *App) startup(ctx context.Context) {
 	a.tools = NewToolRegistry()
 	RegisterBuiltinTools(a.tools)
 	a.modes = NewModeService(a.projects)
+	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
+	// global modes dir on first launch. Subsequent launches leave the
+	// dir alone so user edits persist.
+	if written, err := seedGlobalModesOnce(); err != nil {
+		wruntime.LogWarningf(ctx, "seed global modes: %v", err)
+	} else if len(written) > 0 {
+		wruntime.LogInfof(ctx, "seeded %d mode files into global modes dir", len(written))
+	}
 	a.approvals = NewApprovalManager()
 	a.snapshots = NewSnapshotService(a.projects)
 

@@ -465,7 +465,7 @@ export default function App() {
       const sess = await CreateSession(
         activeProject.ID,
         'New chat',
-        'chat-only',
+        'chat',
         activeProfileId,
       );
       const list = await ListSessions(activeProject.ID);

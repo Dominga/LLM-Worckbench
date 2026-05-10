@@ -181,50 +181,22 @@ func (m *Mode) normalise() {
 
 // ───────────────────────────── Builtin set ──────────────────────────
 
+// builtinModes is the always-available fallback set. v1 ships exactly
+// one: a minimum-viable `chat` mode with no template, no tools, no
+// approval gate. Everything else (research / agent / auto-edit /
+// project-specific) lives in the global modes dir, seeded from the
+// bundled `modes/` directory on first launch (see mode_seed.go).
 var builtinModes = []Mode{
 	{
-		ID:     "chat-only",
-		Name:   "Chat only",
-		Color:  "#94a3b8",
-		Source: ModeSourceBuiltin,
-		Desc:   "Plain conversation. No tools, no RAG injection. Useful when the model just needs to talk.",
-		SystemPrompt: "You are a helpful assistant. Respond directly to the user; do not call tools.",
+		ID:            "chat",
+		Name:          "Chat",
+		Color:         "#94a3b8",
+		Source:        ModeSourceBuiltin,
+		Desc:          "Plain conversation. No tools, no system prompt, no RAG injection.",
+		SystemPrompt:  "",
 		ToolWhitelist: []string{},
 		Approval:      ApprovalAuto,
 		Context:       ContextNone,
-	},
-	{
-		ID:     "research",
-		Name:   "Research",
-		Color:  "#22c55e",
-		Source: ModeSourceBuiltin,
-		Desc:   "Read-only investigation. Searches and reads project content; never writes.",
-		SystemPrompt: "You are a careful research assistant. Use the available tools to search and read project content before answering. Cite the file paths you read in your response. Never edit anything.",
-		ToolWhitelist: []string{"search_semantic", "read_file", "list_files"},
-		Approval:      ApprovalAuto,
-		Context:       ContextRAGAuto,
-	},
-	{
-		ID:     "agent",
-		Name:   "Agent",
-		Color:  "#3b82f6",
-		Source: ModeSourceBuiltin,
-		Desc:   "Full toolset. User confirms each write via a diff modal.",
-		SystemPrompt: "You are an autonomous coding agent. Use the tools to inspect the project, propose edits, and explain changes before writing. Each edit is reviewed by the user before it lands.",
-		ToolWhitelist: []string{"search_semantic", "read_file", "list_files", "edit_file"},
-		Approval:      ApprovalAlways,
-		Context:       ContextRAGExplicit,
-	},
-	{
-		ID:     "auto-edit",
-		Name:   "Auto-edit",
-		Color:  "#f59e0b",
-		Source: ModeSourceBuiltin,
-		Desc:   "Full toolset, no per-edit confirmation. The runtime takes a git snapshot before the loop so the user can revert.",
-		SystemPrompt: "You are an autonomous coding agent. Make the edits you think are needed. The user has snapshotted the working tree and can revert; explain the plan briefly, then act.",
-		ToolWhitelist: []string{"search_semantic", "read_file", "list_files", "edit_file"},
-		Approval:      ApprovalSnapshot,
-		Context:       ContextRAGExplicit,
 	},
 }
 
@@ -383,10 +355,10 @@ func (s *ModeService) Resolve(projectID, modeID string) Mode {
 			return m
 		}
 	}
-	if m, ok := ModeByID("chat-only"); ok {
+	if m, ok := ModeByID("chat"); ok {
 		return m
 	}
-	m := Mode{ID: "chat-only", Name: "Chat only", Source: ModeSourceBuiltin}
+	m := Mode{ID: "chat", Name: "Chat only", Source: ModeSourceBuiltin}
 	m.normalise()
 	return m
 }
