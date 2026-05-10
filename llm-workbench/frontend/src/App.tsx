@@ -115,6 +115,13 @@ export default function App() {
     EventsOn('app:fatal', (msg: string) => {
       notifications.show({ color: 'red', title: 'Fatal', message: msg, autoClose: false });
     });
+    EventsOn('agent:snapshot:taken', (snap: { sha: string; modeId: string }) => {
+      notifications.show({
+        color: 'gray',
+        title: 'Agent snapshot taken',
+        message: `${snap.modeId} · ${snap.sha.slice(0, 8)} — revert via the project's Snapshots binding.`,
+      });
+    });
     EventsOn('sys:metrics', (payload: SysMetricsPayload) => {
       setSysMetrics(payload);
     });
@@ -125,6 +132,7 @@ export default function App() {
     return () => {
       EventsOff('app:fatal');
       EventsOff('sys:metrics');
+      EventsOff('agent:snapshot:taken');
     };
   }, [reloadProfiles]);
 

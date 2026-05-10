@@ -66,6 +66,10 @@ export function GetSystemMetrics() {
   return window['go']['main']['App']['GetSystemMetrics']();
 }
 
+export function ListAgentSnapshots(arg1) {
+  return window['go']['main']['App']['ListAgentSnapshots'](arg1);
+}
+
 export function ListFiles(arg1) {
   return window['go']['main']['App']['ListFiles'](arg1);
 }
@@ -136,6 +140,10 @@ export function RespondToApproval(arg1, arg2, arg3) {
 
 export function RestartProfile(arg1) {
   return window['go']['main']['App']['RestartProfile'](arg1);
+}
+
+export function RevertLastAgentSnapshot(arg1, arg2) {
+  return window['go']['main']['App']['RevertLastAgentSnapshot'](arg1, arg2);
 }
 
 export function SearchProject(arg1, arg2, arg3, arg4, arg5, arg6) {

@@ -34,6 +34,8 @@ export function GetSession(arg1:string,arg2:string):Promise<main.Session>;
 
 export function GetSystemMetrics():Promise<main.SystemMetrics>;
 
+export function ListAgentSnapshots(arg1:string):Promise<Array<main.AgentSnapshot>>;
+
 export function ListFiles(arg1:string):Promise<Array<main.FileNode>>;
 
 export function ListModes(arg1:string):Promise<Array<main.Mode>>;
@@ -69,6 +71,8 @@ export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;
 export function RespondToApproval(arg1:string,arg2:boolean,arg3:string):Promise<void>;
 
 export function RestartProfile(arg1:string):Promise<void>;
+
+export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.AgentSnapshot>;
 
 export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<Array<main.ChunkHit>>;
 

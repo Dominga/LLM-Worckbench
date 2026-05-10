@@ -155,11 +155,21 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       slip through. Tests: manager roundtrip, double-respond is an error,
       cancel closes channel, read tools bypass gate, accept proceeds, reject
       surfaces as error, snapshot bypass, fail-closed without manager.
-- [ ] **PR20** — Pre-agent snapshots. When `approval = "snapshot"`, the agent loop
-      runs `git add -A && git commit --allow-empty -m "agent: snapshot before
-      <mode> @ <ts>"` at start. App binding `RevertLastAgentSnapshot(projectID)`
-      runs `git reset --hard <prev>`. Frontend shows the snapshot SHA in the
-      assistant message footer with a "revert" button.
+- [x] **PR20** — Pre-agent git snapshots for `approval=snapshot` modes.
+      `snapshot.go` `SnapshotService.Take` ensures `.llm-workshop/` is in
+      `.gitignore` (so the snapshot log itself doesn't ride into the commit and
+      get wiped on revert), runs `git add -A && git commit --allow-empty
+      -m "agent: snapshot before <mode> @ <ts>"`, captures the resulting SHA,
+      and appends an `AgentSnapshot` record to
+      `<project>/.llm-workshop/snapshots.jsonl`. ChatService routes
+      `approval=snapshot` runs through `Take` before invoking the agent loop;
+      failures emit `agent:snapshot:failed:<streamId>` but don't abort the run.
+      Bindings: `RevertLastAgentSnapshot(projectID, sha)` (empty SHA = latest
+      unreverted), `ListAgentSnapshots(projectID)`. Revert does
+      `git reset --hard <sha>` and flips the log entry's `reverted` flag. Toast
+      in App on `agent:snapshot:taken`. Tests: take→log append, revert→file
+      restoration, latest-unreverted skipping flagged entries, refusal on
+      non-git projects. Per-message revert UI lives in PR21 (source attribution).
 - [ ] **PR21** — Source-attribution UI. Tool calls per-message persisted into
       session JSONL (extend `SessionMessage` with `tool_calls` field). Assistant
       bubble renders chips: `🔍 search_semantic("foo")`, `📄 README.md:120-200`,

@@ -26,6 +26,7 @@ type App struct {
 	tools     *ToolRegistry
 	modes     *ModeService
 	approvals *ApprovalManager
+	snapshots *SnapshotService
 }
 
 func NewApp() *App {
@@ -82,6 +83,7 @@ func (a *App) startup(ctx context.Context) {
 	RegisterBuiltinTools(a.tools)
 	a.modes = NewModeService(a.projects)
 	a.approvals = NewApprovalManager()
+	a.snapshots = NewSnapshotService(a.projects)
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)
@@ -90,7 +92,7 @@ func (a *App) startup(ctx context.Context) {
 	// Hook the agent loop into ChatService so sessions whose mode has
 	// a tool whitelist run through the multi-turn tool loop. Must
 	// happen after NewChatService so the receiver isn't nil.
-	a.chat.AttachAgent(a.tools, a.modes, a.approvals, func(projectID string) *AgentContext {
+	a.chat.AttachAgent(a.tools, a.modes, a.approvals, a.snapshots, func(projectID string) *AgentContext {
 		var embedID string
 		// Auto-pick the first running embed profile for context.
 		if a.registry != nil && a.profiles != nil {
@@ -161,6 +163,26 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
 	}
 	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
+}
+
+// RevertLastAgentSnapshot rolls the project tree back to the most
+// recent unreverted snapshot taken by an `approval=snapshot` agent
+// loop. Pass an empty SHA to use the latest unreverted entry; pass a
+// specific SHA to revert to that one.
+func (a *App) RevertLastAgentSnapshot(projectID, sha string) (AgentSnapshot, error) {
+	if a.snapshots == nil {
+		return AgentSnapshot{}, fmt.Errorf("snapshots not available")
+	}
+	return a.snapshots.Revert(a.ctx, projectID, sha)
+}
+
+// ListAgentSnapshots returns the per-project snapshot log, oldest
+// first. Used by the UI to render a "revert" affordance.
+func (a *App) ListAgentSnapshots(projectID string) ([]AgentSnapshot, error) {
+	if a.snapshots == nil {
+		return nil, fmt.Errorf("snapshots not available")
+	}
+	return a.snapshots.List(projectID)
 }
 
 // RespondToApproval delivers the user's accept/reject decision for a

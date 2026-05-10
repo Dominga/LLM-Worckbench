@@ -32,6 +32,7 @@ type ChatService struct {
 	tools     *ToolRegistry
 	modes     *ModeService
 	approvals *ApprovalManager
+	snapshots *SnapshotService
 	agentX    func(projectID string) *AgentContext // builds AgentContext on demand
 
 	ctx context.Context
@@ -52,10 +53,17 @@ func NewChatService(registry *ServerRegistry, pm *ProfileManager, sessions *Sess
 // AttachAgent wires the optional agent-loop dependencies. Safe to call
 // after NewChatService — keeps the constructor signature stable while
 // M3 services come online.
-func (c *ChatService) AttachAgent(tools *ToolRegistry, modes *ModeService, approvals *ApprovalManager, agentX func(projectID string) *AgentContext) {
+func (c *ChatService) AttachAgent(
+	tools *ToolRegistry,
+	modes *ModeService,
+	approvals *ApprovalManager,
+	snapshots *SnapshotService,
+	agentX func(projectID string) *AgentContext,
+) {
 	c.tools = tools
 	c.modes = modes
 	c.approvals = approvals
+	c.snapshots = snapshots
 	c.agentX = agentX
 }
 
@@ -185,6 +193,21 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			ac := c.agentX(projectID)
 			ac.ProjectID = projectID
 			ac.Mode = resolved
+			// Pre-loop git snapshot for `approval = "snapshot"` modes.
+			// Failures are non-fatal — we still let the loop run, but
+			// emit an event so the UI can warn the user that revert
+			// won't be possible.
+			if resolved.Approval == ApprovalSnapshot && c.snapshots != nil {
+				snap, sErr := c.snapshots.Take(streamCtx, projectID, resolved.ID, streamID)
+				if sErr != nil {
+					if c.ctx != nil {
+						wruntime.EventsEmit(c.ctx, "agent:snapshot:failed:"+streamID, sErr.Error())
+					}
+				} else if c.ctx != nil {
+					wruntime.EventsEmit(c.ctx, "agent:snapshot:taken:"+streamID, snap)
+					wruntime.EventsEmit(c.ctx, "agent:snapshot:taken", snap)
+				}
+			}
 			var res AgentLoopResult
 			var e error
 			if wireMode == "react" {
