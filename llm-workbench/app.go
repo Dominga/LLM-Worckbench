@@ -23,6 +23,7 @@ type App struct {
 	indexer   *FileIndexer
 	embedder  *EmbeddingService
 	rag       *RAGService
+	tools     *ToolRegistry
 }
 
 func NewApp() *App {
@@ -75,6 +76,8 @@ func (a *App) startup(ctx context.Context) {
 		a.embedder.Attach(ctx)
 		a.rag = NewRAGService(a.embedder, a.indexes)
 	}
+	a.tools = NewToolRegistry()
+	RegisterBuiltinTools(a.tools)
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)

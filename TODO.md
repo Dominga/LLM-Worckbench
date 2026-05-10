@@ -62,6 +62,76 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 **Files:** `supervisor.go`, `frontend/src/App.tsx`, `frontend/src/tabs/ServersTab.tsx`.
 
+## Milestone 3 — Agent loop
+
+DESIGN.md §5.3 + §9 M3. Decisions for M3:
+
+- **Tool protocol:** hybrid. On first use probe the active chat profile via a small
+  `/v1/chat/completions` call with `tools=[]` and an empty user message; if the model
+  accepts and surfaces tool_calls in the response, use OpenAI-style function calling
+  for that profile (cached). Otherwise fall back to ReAct text-prompting (system
+  prompt explains an `Action:`/`Args:` line format, the loop parses it from the
+  stream).
+- **Toolset (M3 minimum):** `search_semantic` (wrap `RAGService.Search`),
+  `list_files` (wrap `FileService.ListTree`), `read_file` (wrap `ReadFile`),
+  `edit_file` (wrap `WriteFile`). No `run_shell` — shell sandboxing is M5/M6.
+- **Approval policy:** declared per-mode (`approval = "always" | "snapshot" | "auto"`).
+  `always` shows a modal with a diff for every write (`edit_file`); `snapshot` runs
+  `git add -A && git commit -m "agent: …"` before the loop and lets the agent write
+  freely (rollback via `git reset --hard <snap>`); `auto` skips the gate entirely
+  and is only legal for read-only mode definitions.
+
+### PRs
+
+- [x] **PR15** — `agent.go`: `Tool` interface (Name/Description/InputSchema/Execute),
+      `ToolRegistry` (Register/Get/List/Filter/Invoke, concurrency-safe),
+      `AgentContext` (project + mode + service refs). Builtin tools wrap existing
+      services: `search_semantic` → `RAGService.Search`, `list_files` →
+      `FileService.ListTree`, `read_file` → `FileService.ReadFile`, `edit_file` →
+      `FileService.WriteFile`. Each carries a JSON-Schema input spec ready for
+      `tools[].function.parameters` in PR17 / the ReAct prompt block in PR18.
+      Wired into `App` (registry built in `startup`). Tests cover register/get,
+      whitelist filter, unknown-tool / bad-JSON paths, args roundtrip, and an
+      end-to-end pass that runs all four tools against real services on a temp
+      project (Reindex → list → read → search → edit + on-disk verify).
+- [ ] **PR16** — Extend `Mode` struct with `SystemPrompt`, `ToolWhitelist []string`,
+      `ApprovalPolicy enum`, `ContextStrategy`. Builtin modes:
+      `chat` (no tools, just LLM), `research` (read-only tools, approval=auto),
+      `agent` (full toolset, approval=always), `auto-edit` (full toolset,
+      approval=snapshot). Project-local modes loaded from
+      `<project>/.llm-workshop/modes/*.toml`. Mode picker actually drives behaviour
+      now (M1 was metadata-only).
+- [ ] **PR17** — Native tool-calling path. ChatService gains `streamWithTools` that
+      sends `tools=[]` to llama-server and dispatches tool_call deltas. Capability
+      probe on first chat to a profile, cached in profile state.
+- [ ] **PR18** — ReAct fallback. System-prompt template enumerates tools as a JSON
+      schema block. Stream accumulator intercepts `Action:` / `Args:` lines, runs
+      the tool, injects result as a synthetic assistant turn (`Observation: …`),
+      continues the loop until the model emits a final answer or hits the
+      iteration cap (default 8).
+- [ ] **PR19** — Approval-gate UI. `ToolCallApproval` modal with old-vs-new diff
+      for `edit_file` (CodeMirror diff view). Per-mode `[approval]` policy
+      enforced server-side: `always` blocks until UI confirms, `snapshot` skips
+      modal but logs the call, `auto` is read-only-only.
+- [ ] **PR20** — Pre-agent snapshots. When `approval = "snapshot"`, the agent loop
+      runs `git add -A && git commit --allow-empty -m "agent: snapshot before
+      <mode> @ <ts>"` at start. App binding `RevertLastAgentSnapshot(projectID)`
+      runs `git reset --hard <prev>`. Frontend shows the snapshot SHA in the
+      assistant message footer with a "revert" button.
+- [ ] **PR21** — Source-attribution UI. Tool calls per-message persisted into
+      session JSONL (extend `SessionMessage` with `tool_calls` field). Assistant
+      bubble renders chips: `🔍 search_semantic("foo")`, `📄 README.md:120-200`,
+      `✏️ src/x.go (15+/3-)`. Click chip → highlight source pane.
+
+### Open
+
+- Mode-local modes vs builtin: do we let projects override builtin IDs? Probably
+  yes with a precedence rule (project > builtin) — decide in PR16.
+- Iteration cap and infinite-loop detection — agent.go has to enforce a hard
+  ceiling and detect oscillating tool calls (same Args twice in a row → abort).
+- M3-blockers worth surfacing as TDs: cancel mid-tool-call (right now ChatCancel
+  cancels stream; we'll need to also cancel an in-flight tool handler).
+
 ## Tech debt / nice-to-have
 
 ### TD8 — /search hit click should scroll to the chunk
