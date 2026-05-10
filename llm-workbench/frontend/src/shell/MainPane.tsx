@@ -11,6 +11,7 @@ import {
 } from './types';
 import { ChatTab } from '../tabs/ChatTab';
 import { ServersTab } from '../tabs/ServersTab';
+import { LabTab } from '../tabs/LabTab';
 
 export type MainPaneProps = {
   tab: Tab;
@@ -55,7 +56,8 @@ export function MainPane(props: MainPaneProps) {
   // when active — they have no state worth preserving.
   const showChat = tab === 'chat';
   const showServers = tab === 'servers';
-  const showDisabled = tab === 'project' || tab === 'lab' || tab === 'runs';
+  const showLab = tab === 'lab';
+  const showDisabled = tab === 'project' || tab === 'runs';
 
   return (
     <div style={{ flex: 1, display: 'flex', minWidth: 0, position: 'relative' }}>
@@ -107,6 +109,11 @@ export function MainPane(props: MainPaneProps) {
           onDeleteProfile={props.onDeleteProfile}
         />
       </div>
+      {showLab && (
+        <div style={{ flex: 1, display: 'flex', minWidth: 0 }}>
+          <LabTab activeProject={props.activeProject} />
+        </div>
+      )}
       {showDisabled && <DisabledTab name={tab} />}
     </div>
   );

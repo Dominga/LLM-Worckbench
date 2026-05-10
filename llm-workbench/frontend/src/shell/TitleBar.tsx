@@ -36,7 +36,7 @@ const TABS: TabDef[] = [
   { id: 'chat',    label: 'Chat',       Icon: IconMessage, enabled: true },
   { id: 'servers', label: 'Servers',    Icon: IconServer,  enabled: true },
   { id: 'project', label: 'Project',    Icon: IconFolder,  enabled: false },
-  { id: 'lab',     label: 'Prompt Lab', Icon: IconFlask,   enabled: false },
+  { id: 'lab',     label: 'Prompt Lab', Icon: IconFlask,   enabled: true },
   { id: 'runs',    label: 'Runs',       Icon: IconBolt,    enabled: false },
 ];
 

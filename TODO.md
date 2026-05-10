@@ -93,9 +93,15 @@ DESIGN.md §5.5 + §9 M4. Decisions:
       no-op on missing), overwrite, name-validation matrix (rejects `""`,
       `../escape`, `with space`, `weird/slash`, `dot..`; accepts snake_case,
       kebab-case, Mixed.123), list ignoring `notes.txt`.
-- [ ] **PR24** — Prompt Lab tab (currently disabled placeholder). CodeMirror JS
-      editor + Run button + output panel. Wires `RunScript` and renders
-      `ScriptResult.output[]` + `Return` JSON.
+- [x] **PR24** — Prompt Lab tab enabled. `LabTab.tsx` lays out a 200px scripts
+      rail (list + New + Reload + per-row Delete) plus an editor pane
+      (CodeMirror 6 + `@codemirror/lang-javascript` + oneDark) and a 240px
+      output panel below it. Toolbar: name input, dirty `●` indicator, Save,
+      Run. Keyboard: `Ctrl/⌘+Enter` runs, `Ctrl/⌘+S` saves. Output panel
+      renders error (red), each `app.log(...)` line, and the final
+      expression's `Return` as JSON. STARTER_SCRIPT showcases the `app` API
+      surface so new users land on a working example. Tab toggle in
+      `TitleBar` flipped to `enabled: true`.
 
 ### Deferred to TDs
 
