@@ -123,7 +123,7 @@ ListModes()
 - [x] **PR4** — SessionService + JSONL persistence. Sessions pane (group Today/This week/Earlier). Session-bound chat: history loaded, user/assistant messages auto-persisted. Mode picker → UpdateSessionMode. ✓
 - [x] **PR5** — V5 shell: TitleBar + Sidebar + MainPane (F1+F2 в одном цикле). ✓
 - [x] **PR6** — Edit pane: dirty tracking, Save/Revert footer, auto-save 1s debounce, ⌘S/Ctrl+S shortcut. ✓
-- [ ] **PR7** — Servers tab (KPI + master/detail). Logs + config view.
+- [x] **PR7** — Servers tab (KPI + master/detail). Logs + config view. ✓
 - [x] **PR8** — Profile create/edit/delete modal (Mantine form + path pickers). Validation client+server. ✓
 
 ## Принятые решения
