@@ -9,6 +9,7 @@ import {
   IconCopy,
   IconTrash,
 } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
 import { V5 } from '../theme';
 import {
   Profile,
@@ -474,6 +475,7 @@ export function ServersTab({
             <div
               style={{
                 display: 'flex',
+                alignItems: 'center',
                 borderBottom: `1px solid ${V5.borderSoft}`,
                 flex: 'none',
               }}
@@ -500,6 +502,50 @@ export function ServersTab({
                   {k}
                 </button>
               ))}
+              {logsTab === 'logs' && (
+                <button
+                  onClick={async () => {
+                    if (selectedLogs.length === 0) {
+                      notifications.show({
+                        color: 'gray',
+                        title: 'Logs empty',
+                        message: 'No log lines captured yet.',
+                      });
+                      return;
+                    }
+                    try {
+                      await navigator.clipboard.writeText(selectedLogs.join('\n'));
+                      notifications.show({
+                        color: 'teal',
+                        title: 'Copied',
+                        message: `${selectedLogs.length} log lines on clipboard.`,
+                      });
+                    } catch (e: any) {
+                      notifications.show({
+                        color: 'red',
+                        title: 'Copy failed',
+                        message: String(e),
+                      });
+                    }
+                  }}
+                  title="Copy all log lines"
+                  style={{
+                    padding: '6px 10px',
+                    marginRight: 6,
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: V5.textMuted,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                  }}
+                >
+                  <IconCopy size={12} />
+                  copy
+                </button>
+              )}
             </div>
 
             <div

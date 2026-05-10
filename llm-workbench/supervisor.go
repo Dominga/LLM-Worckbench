@@ -88,12 +88,13 @@ type ServerInstance struct {
 	profile Profile
 	ctx     context.Context
 
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	state     ServerState
-	healthy   bool
-	startedAt time.Time
-	cancelHC  context.CancelFunc
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	state         ServerState
+	healthy       bool
+	startedAt     time.Time
+	cancelHC      context.CancelFunc
+	stopRequested bool
 
 	logRing []string
 	logHead int
@@ -190,6 +191,11 @@ func (si *ServerInstance) Start() error {
 	if err != nil {
 		return err
 	}
+	// VRAM snapshot computed before exec but logged after the ring reset
+	// below, so it survives clear-on-start and the user can compare
+	// baselines between app- and terminal-launches (--fit non-determinism).
+	vramSnap := vramSnapshotLine()
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start llama-server: %w", err)
 	}
@@ -202,11 +208,24 @@ func (si *ServerInstance) Start() error {
 	si.startedAt = time.Now()
 	si.cancelHC = cancelHC
 	si.healthy = false
+	si.stopRequested = false
 	si.tpsSpark = nil
 	si.lastTPS = 0
 	si.reqs = 0
+	// Reset log ring on each Start so the user sees only the current run.
+	// Previous-run output stays in the JSONL/ring of the dead process and
+	// is lost when the instance is replaced.
+	si.logRing = si.logRing[:0]
+	si.logHead = 0
 	si.mu.Unlock()
 
+	if si.ctx != nil {
+		wruntime.EventsEmit(si.ctx, "llama:log:cleared:"+si.profile.ID)
+	}
+
+	if vramSnap != "" {
+		si.appendLog("stdout", vramSnap)
+	}
 	si.appendLog("stdout", fmt.Sprintf("started pid=%d cmd=%s %v", cmd.Process.Pid, si.profile.BinPath, args))
 	si.emitStatus()
 
@@ -217,7 +236,13 @@ func (si *ServerInstance) Start() error {
 		si.mu.Lock()
 		si.cmd = nil
 		wasHealthy := si.healthy
-		if werr != nil {
+		intentional := si.stopRequested
+		// Stop() SIGTERMs the subprocess, so cmd.Wait() returns a non-nil
+		// signal error even on a normal user-requested shutdown. Don't
+		// flag those as crashes.
+		if intentional {
+			si.state = StateStopped
+		} else if werr != nil {
 			si.state = StateCrashed
 		} else if wasHealthy {
 			si.state = StateStopped
@@ -225,6 +250,7 @@ func (si *ServerInstance) Start() error {
 			si.state = StateCrashed
 		}
 		si.healthy = false
+		si.stopRequested = false
 		if si.cancelHC != nil {
 			si.cancelHC()
 			si.cancelHC = nil
@@ -249,6 +275,7 @@ func (si *ServerInstance) Stop() error {
 		return nil
 	}
 	pid := si.cmd.Process.Pid
+	si.stopRequested = true
 	si.mu.Unlock()
 
 	_ = syscall.Kill(-pid, syscall.SIGTERM)
@@ -503,6 +530,13 @@ func (r *ServerRegistry) Start(id string) error {
 	if err != nil {
 		return err
 	}
+	// Runtime port-collision check. Profiles may share a Port (different
+	// model/args variants of the same server), but only one can listen at a
+	// time. Look across the registry for another running instance bound to
+	// the same host:port.
+	if conflict := r.findPortConflict(si); conflict != "" {
+		return fmt.Errorf("port %d already in use by running profile %q", si.profile.Port, conflict)
+	}
 	if err := si.Start(); err != nil {
 		return err
 	}
@@ -522,6 +556,27 @@ func (r *ServerRegistry) Start(id string) error {
 		}(si.profile.EmbedProfileID)
 	}
 	return nil
+}
+
+// findPortConflict returns the ID of another running ServerInstance bound
+// to the same host:port as `target`, or "" if none. Two stopped profiles
+// sharing a port is fine; only one may be live at a time.
+func (r *ServerRegistry) findPortConflict(target *ServerInstance) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, si := range r.instances {
+		if si == target {
+			continue
+		}
+		si.mu.Lock()
+		running := si.cmd != nil && si.cmd.Process != nil
+		samePort := si.profile.Port == target.profile.Port && si.profile.Host == target.profile.Host
+		si.mu.Unlock()
+		if running && samePort {
+			return id
+		}
+	}
+	return ""
 }
 
 func (r *ServerRegistry) Stop(id string) error {

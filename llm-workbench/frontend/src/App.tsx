@@ -135,7 +135,8 @@ export default function App() {
       const stEv = `llama:status:${p.ID}`;
       const mEv = `llama:metrics:${p.ID}`;
       const lEv = `llama:log:${p.ID}`;
-      channels.push(stEv, mEv, lEv);
+      const lcEv = `llama:log:cleared:${p.ID}`;
+      channels.push(stEv, mEv, lEv, lcEv);
 
       EventsOn(stEv, (st: InstanceStatus) => {
         setStatusByProfile((prev) => ({ ...prev, [p.ID]: st }));
@@ -149,6 +150,9 @@ export default function App() {
           const next = cur.length >= LOG_RING_SIZE ? [...cur.slice(1), line] : [...cur, line];
           return { ...prev, [p.ID]: next };
         });
+      });
+      EventsOn(lcEv, () => {
+        setLogsByProfile((prev) => ({ ...prev, [p.ID]: [] }));
       });
 
       GetProfileStatus(p.ID)

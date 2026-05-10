@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -91,6 +92,27 @@ func computeGPUMetrics() GPUMetrics {
 		UsedMB:    totalUsed,
 		TotalMB:   totalCap,
 	}
+}
+
+// vramSnapshotLine returns a one-liner describing live VRAM per GPU,
+// bypassing the metrics cache. Used to log the GPU baseline immediately
+// before spawning a llama-server subprocess so the user can compare runs.
+// Returns "" when nvidia-smi is unavailable.
+func vramSnapshotLine() string {
+	m := computeGPUMetrics()
+	if !m.Available || len(m.GPUs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(m.GPUs))
+	for _, g := range m.GPUs {
+		var free uint64
+		if g.TotalMB > g.UsedMB {
+			free = g.TotalMB - g.UsedMB
+		}
+		parts = append(parts, fmt.Sprintf("GPU%d used=%dMiB free=%dMiB total=%dMiB",
+			g.Index, g.UsedMB, free, g.TotalMB))
+	}
+	return "pre-start VRAM: " + strings.Join(parts, " | ")
 }
 
 // queryNvidia runs nvidia-smi with a CSV query and parses the result.

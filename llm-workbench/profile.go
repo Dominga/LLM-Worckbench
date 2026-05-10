@@ -218,9 +218,6 @@ func (pm *ProfileManager) Create(p Profile) (Profile, error) {
 		if ex.ID == p.ID {
 			return Profile{}, fmt.Errorf("profile id %q already exists", p.ID)
 		}
-		if ex.Port == p.Port {
-			return Profile{}, fmt.Errorf("port %d already used by profile %q", p.Port, ex.ID)
-		}
 	}
 	now := time.Now().UTC()
 	p.CreatedAt = now
@@ -261,14 +258,6 @@ func (pm *ProfileManager) Update(id string, p Profile) (Profile, error) {
 	}
 	if err := p.Validate(); err != nil {
 		return Profile{}, err
-	}
-	for i, ex := range pm.profiles {
-		if i == idx {
-			continue
-		}
-		if ex.Port == p.Port {
-			return Profile{}, fmt.Errorf("port %d already used by profile %q", p.Port, ex.ID)
-		}
 	}
 	prev := pm.profiles[idx]
 	pm.profiles[idx] = p

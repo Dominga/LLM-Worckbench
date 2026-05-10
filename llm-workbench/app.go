@@ -70,14 +70,9 @@ func (a *App) startup(ctx context.Context) {
 
 	a.startSysMetricsTicker(ctx)
 
-	if cfg != nil && cfg.Autostart {
-		// Honor the legacy .env autostart flag for the seeded profile.
-		if id := a.registry.DefaultProfileID(); id != "" {
-			if err := a.registry.Start(id); err != nil {
-				wruntime.EventsEmit(ctx, "llama:log", fmt.Sprintf("autostart failed: %v", err))
-			}
-		}
-	}
+	// Per-profile Autostart flag is the single source of truth.
+	// (Legacy .env LLAMA_AUTOSTART path removed — it ignored the profile's
+	// own flag and force-started the default chat profile on every launch.)
 	a.registry.AutostartAll()
 }
 

@@ -1,137 +1,75 @@
-# TODO — Milestone 1 + V5 Loom shell
+# TODO — backlog
 
-План реализации M1 (DESIGN.md §9) поверх V5-мокапа (`Design/llm-workshop/project/v5-loom.jsx`, `v5-servers.jsx`). Текущая база: M0 spike (single `.env` profile, single CodeMirror, чат без сессий).
+M1 closed (PR1–PR8 merged). Planning history: see git log + `DESIGN.md`.
 
-## Scope: V5 vs M1
+Bugs / improvements on top of M1, before M2 (RAG) starts.
 
-| V5 элемент | M1? | Решение |
-|---|---|---|
-| Tabs: Chat, Servers | да | реализуем |
-| Tabs: Project, Prompt Lab, Runs | нет | tab-stub disabled, серые иконки |
-| Sidebar Sessions / Files / Servers | да | три pane |
-| Mode picker pill | metadata only | id+цвет в session, picker disabled (агент → M3) |
-| Tool log (search/read/edit) | нет | placeholder; чат plain user/assistant |
-| Diff/Edit/Preview split | Edit+Preview да, Diff нет | "Diff" tab скрыт (staged-edits → M3) |
-| Sources chips, Approval, Snapshot | нет | прячем |
-| Servers dashboard (master+detail+logs+config+metrics) | да | logs/config работают, metrics — basic |
-| KPI strip (VRAM/RAM/throughput/req) | partial | VRAM/throughput из llama-server `/health`/`/metrics`; req — counter в supervisor |
-| Embed/Rerank kinds | profile-kind enum (DESIGN §4.4); запускать chat по умолчанию | embed допустим, rerank → M2 |
+## Bugs
 
-## Backend — Go layer
+### B1 — Port uniqueness: enforce at runtime, not in the profile form ✓ done
 
-### Phase B1 — Domain types + persistence
+**Was:** `profile.go` (`CreateProfile`/`UpdateProfile`) rejected saving a profile if another profile already used the same `port`. Two profiles with the same port could not be created at all.
 
-Новые файлы (`llm-workbench/internal/` или плоско):
+**Should be:** port collision is a runtime concern (only one process can listen on a port), but statically two profiles sharing a port are valid. Use case: two variants of the same server (different models/args), launched one at a time.
 
-- `profile.go` — `Profile{ID, Kind (chat|embed|rerank), Bin, ModelPath, Host, Port, ExtraArgs[], CtxSize, NGL, Sampling{Temp,TopP,MinP,RepeatPenalty}, Autostart}`. Хранение: `~/.config/llm-workbench/profiles.toml`. Валидация: уникальный port, существование bin/model.
-- `project.go` — `Project{ID, Path, Name, CreatedAt, LastOpened}`. Реестр: `~/.config/llm-workbench/projects.toml`. Per-project: `<root>/project.toml` + `<root>/.llm-workbench/`. `git init` если нет `.git`. `.gitignore` исключает `.llm-workbench/state/`.
-- `session.go` — `Session{ID, ProjectID, Title, ModeID, ProfileID, CreatedAt, UpdatedAt}` + messages. JSONL: `<project>/.llm-workbench/sessions/<id>.jsonl` (DESIGN §7.2). Header line + per-message line.
-- `mode.go` — статичный реестр builtin режимов (id, name, color, desc). Без выполнения. Frontend читает через `ListModes()`.
+**Fix:**
+- `profile.go` — drop port-uniqueness check from `CreateProfile`/`UpdateProfile`. Keep the `1..65535` range check.
+- `supervisor.go` `StartProfile(id)` — before `cmd.Start()`, iterate `instances` and find any running one with the same `Port`. If found → return `port %d already in use by profile %q (running)`. Optionally probe `net.Listen` on `host:port` for external occupants.
+- Frontend: surface Start errors via Mantine `notifications.show`, no silent failures.
 
-### Phase B2 — Services (рефактор существующих)
+**Files:** `profile.go`, `supervisor.go` (Start path), `ProfileForm.tsx`.
 
-- `ProfileManager` — `List() / Get(id) / Create / Update / Delete`. Заменяет чтение `.env` в `config.go`. `.env` остаётся как одноразовый seed для миграции.
-- `ServerSupervisor` (рефактор `supervisor.go`). Single instance → `map[profileID]*ServerInstance`. Каждый instance: своя cmd, log buffer, health-poll loop, tps counter (парсить `slot N released | tokens X | Y t/s` из stderr). Events: `llama:status:<profileID>`, `llama:log:<profileID>`, `llama:metrics:<profileID>` (vram через `/health` или `nvidia-smi --query-gpu=memory.used`).
-- `ProjectService` — открыть/создать проект. Wrapper для file ops. M1 редактирование руками юзера через CodeMirror = `WriteFile(projectID, relPath, content)` с проверкой path clean+inside root. Snapshot — отложен или `git add -A && git commit -m "snapshot"` minimal.
-- `SessionService` — CRUD сессий, append messages, стрим через `chat.go`. `ChatStream(streamID, prompt)` → `ChatStream(sessionID, prompt)`; service подгружает историю и шлёт `messages[]` в `/v1/chat/completions`.
-- `FileService` — `ListTree(projectID)` (рекурсивно size+mtime, dotfiles фильтр), `ReadFile`, `WriteFile`. Dirty-флаг = mtime vs in-memory open buffer.
+### B2 — Copy/paste `extra_args` between profiles ✓ done
 
-### Phase B3 — App bindings
+**Was:** the `LLAMA_EXTRA_ARGS` value in the profile form was awkward to copy/paste manually (Mantine `TagsInput` stores a string array).
 
-Заменить узкий M0 API:
+**Should be:** in the profile editor, a "Copy" button next to extra_args puts the joined string on the clipboard; a "Paste" button parses a whitespace-split string back into the array.
 
-```
-ListProfiles / SaveProfile / DeleteProfile
-StartProfile(id) / StopProfile(id) / RestartProfile(id) / ProfileStatus(id) / ProfileMetrics(id)
-ListProjects / OpenProject(path) / CreateProject(path, name) / CurrentProject()
-ListFiles(projectID) / ReadFile / WriteFile
-ListSessions(projectID) / CreateSession(projectID, modeID, profileID) / RenameSession / DeleteSession / GetSession(id)
-ChatStream(sessionID, userText) / ChatCancel(streamID)
-ListModes()
-```
+**Fix:**
+- Add `ActionIcon` with `IconCopy` → `navigator.clipboard.writeText(args.join(' '))`.
+- Add `ActionIcon` with `IconClipboard` → read clipboard, split on whitespace, set value.
+- Toast on success ("Copied" / "Pasted N args").
 
-После — `wails generate module` (CLAUDE.md).
+**Files:** `frontend/src/components/ProfileForm.tsx`.
 
-## Frontend — V5 shell
+### B3 — Legacy `.env` autostart ignored the profile flag ✓ done
 
-### Phase F1 — Mantine theme + V5 палитра
+**Was:** `app.go` started the default chat profile based on `cfg.Autostart` (from `.env`, defaulting to `LLAMA_AUTOSTART=true`), ignoring `Profile.Autostart`. Unchecking the autostart toggle in the UI had no effect.
 
-`App.tsx` → тёмная тема, V5-палитра (см. mockup `V5` const). `MantineProvider` + `theme={createTheme({ colors: { brand: [...синий 50-900...] }, defaultRadius: 'sm' })}`. Цели: сетка/цвета/spacing, не pixel-perfect.
+**Fix:** removed the legacy block in `app.go:73-81`. Per-profile `AutostartAll()` is now the single source of truth.
 
-### Phase F2 — Shell layout
+### B4 — Server-stop wrongly flagged as `crashed` ✓ done
 
-Новый `frontend/src/shell/`:
-- `TitleBar.tsx` — 44px, brand bolt + tabs + статусы (vram/tps live из bindings) + project chip + window controls (Wails `WindowMinimise/Maximise/Hide`).
-- `Sidebar.tsx` 280px — segmented (Sessions/Files/Servers), Search input, `+` action. Состояние сегмента в `useLocalStorage`.
-- `MainPane.tsx` — switch по tab: `<ChatTab>` / `<ServersTab>`. Project/Lab/Runs disabled (`opacity 0.4 cursor:not-allowed`).
+**Was:** `cmd.Wait()` after `Stop()` returned a signal error (SIGTERM), so the status pill flipped to `crashed` and `CrashBanner` appeared on a clean user-requested stop.
 
-### Phase F3 — Sessions pane
+**Fix:** added `stopRequested` flag on `ServerInstance`. `Stop()` sets it before SIGTERM; the Wait goroutine maps the signal-induced exit to `StateStopped` when the flag is set. Reset on next `Start()`.
 
-- `SessionList` — группировка по дате (Today/Earlier/<week>), карточки `V5SessionCard`.
-- New session — модалка: profile picker (только running chat-kind) + mode picker (read-only из `ListModes`).
-- Click → set активную, chat-tab подгружает.
+**Files:** `supervisor.go`.
 
-### Phase F4 — Files pane
+### B5 — Pre-start VRAM snapshot in log ✓ done
 
-- `FileTree` — рекурсивный, expand/collapse в `useState`, persist в localStorage by projectID.
-- Click файла → открыть в правой панели (Edit/Preview), обновить `active`.
-- Dirty marker по unsaved-buffer в Editor.
+**Was:** `--fit` non-determinism (WSL2 + WDDM scheduler causing free-VRAM jitter) made it hard to compare app-launch vs terminal-launch baselines when CUDA OOM showed up at mmproj-warmup.
 
-### Phase F5 — Servers pane (sidebar mini-cards)
+**Fix:** `vramSnapshotLine()` in `gpu_metrics.go` runs uncached `nvidia-smi`, supervisor logs `pre-start VRAM: GPU0 used=… free=… total=…` right after the per-Start log-ring reset.
 
-- Список профилей — карточка с dot/kind chip/model/port/vram/tps + Start/Stop. Поллинг `ProfileMetrics(id)` каждые 2s через event `llama:metrics:*`.
+**Files:** `gpu_metrics.go`, `supervisor.go`.
 
-### Phase F6 — Chat tab
+### B6 — Logs cleared on each Start + Copy-logs button ✓ done
 
-- Header: title (editable inline), Snapshot (M1 hidden/disabled), mode pill (read-only), profile chip, ctx counter (приблизительно от истории).
-- Message list: `user` справа, `assistant` слева с Sparkle-аватаром. Markdown через `render.go` (server-side, per memory `feedback_render_pipeline`).
-- Tool log entries — скрыты в M1.
-- Input: textarea + mode pill (disabled) + Send (`Cmd/Ctrl+Enter`). Без "9 tools / Approval".
-- Streaming через существующий `chat:delta:<id>`; delta append-only в DOM (no per-token React re-render).
+**Was:** server logs from previous runs accumulated in the ring; users had to manually scroll/scrub.
 
-### Phase F7 — Right pane (Edit/Preview)
+**Fix:** `ServerInstance.Start()` resets `logRing` and emits `llama:log:cleared:<profileID>`. Frontend resets its per-profile log buffer on that event. Added a `copy` button in the logs/config/metrics tabs row that copies the full log ring to clipboard via `navigator.clipboard.writeText`.
 
-- Tabs: **Diff (hidden M1) / Edit / Preview**. Default Preview; segmented control.
-- Edit = `Editor.tsx` (CodeMirror 6, markdown, append-stream API сохранить → M3).
-- Preview = `Preview.tsx`, HTML из `RenderMarkdown(content)` (`render.go` уже есть).
-- Footer: dirty + Save/Revert. Auto-save debounce 1s (опц).
+**Files:** `supervisor.go`, `frontend/src/App.tsx`, `frontend/src/tabs/ServersTab.tsx`.
 
-### Phase F8 — Servers tab (full screen)
+## Tech debt / nice-to-have
 
-`V5ServersScreen` 1:1:
-- Header + KPI strip (VRAM total по running, RAM, throughput, requests).
-- Filter row: All/Chat/Embed/Rerank.
-- Master list — карточки из `ListProfiles()` + live metrics.
-- Detail: Logs / Config / Metrics. Logs = ring-buffer (1000 last lines) per profile via event sub. Config = read-only launch cmd + sampling. Metrics = bars + sparkline.
-- New/Edit profile — Mantine модалка (`TextInput`, `NumberInput`, `FileButton`). Validation client+server.
+### TD1 — Copy-logs button still appears blocked in some states
 
-## Persistence + миграция
+After B6 the disabled prop was removed and the click handler always runs (toast `"Logs empty"` on zero lines). User reports the button still feels blocked — possibly a CSS/render issue, possibly a CrashBanner overlay, possibly a stale `selectedLogs` closure. Not investigated. Defer until reproduced reliably.
 
-- M0 `.env` → on first launch, если `profiles.toml` нет, создать профиль `m0-default` из `.env`. Пометить `.env` deprecated в README, не удалять.
-- Sessions JSONL (DESIGN §7.2):
-  ```
-  {"v":1,"sessionId":...,"projectId":...,"modeId":...,"profileId":...,"createdAt":...}
-  {"role":"user","content":"...","ts":...}
-  {"role":"assistant","content":"...","ts":...,"profileId":...}
-  ```
+**Files:** `frontend/src/tabs/ServersTab.tsx` (logs tabs row).
 
-## Порядок работ (PR-по-PR)
+## Next milestone
 
-- [x] **PR1** — Domain types + ProfileManager + миграция .env → toml. ✓
-- [x] **PR2** — Multi-instance ServerSupervisor + per-profile events + TPS counter + frontend wiring. ✓
-- [x] **PR3** — ProjectService + projects.toml + per-project `.llm-workshop/` + git init. Files pane + project menu. Polling 3s. ✓
-- [x] **PR4** — SessionService + JSONL persistence. Sessions pane (group Today/This week/Earlier). Session-bound chat: history loaded, user/assistant messages auto-persisted. Mode picker → UpdateSessionMode. ✓
-- [x] **PR5** — V5 shell: TitleBar + Sidebar + MainPane (F1+F2 в одном цикле). ✓
-- [x] **PR6** — Edit pane: dirty tracking, Save/Revert footer, auto-save 1s debounce, ⌘S/Ctrl+S shortcut. ✓
-- [x] **PR7** — Servers tab (KPI + master/detail). Logs + config view. ✓
-- [x] **PR8** — Profile create/edit/delete modal (Mantine form + path pickers). Validation client+server. ✓
-
-## Принятые решения
-
-1. **Storage layout**:
-   - Глобальный реестр (профили, список проектов): `~/.config/llm-workbench/` (XDG).
-   - Per-project state (sessions JSONL, sqlite-vec индекс будущего M2, кэш): `<projectRoot>/.llm-workshop/`. Папка добавляется в `.gitignore`.
-2. **File watcher** — без `fsnotify`. Polling раз в 2-3 секунды (refresh tree on tick + on user action). Меньше нюансов, кросс-платформенно, для дизайн-целей достаточно.
-3. **Snapshot button** — прячем в M1 (git wrap → M3 вместе с агентным циклом).
-4. **Embed-профиль** — поддерживается как часть управления llama.cpp серверами. Use-cases: (a) запуск двух инстансов параллельно для отладки, (b) флаг `--embedding` для одного инстанса. UI: kind=embed виден в Servers tab, метрики (latency вместо t/s), без RAG-consumer (consumer → M2).
-5. **Mode picker** — демо-вариант: dropdown открывается, выбор пишется в session metadata, но на промпт не влияет (system prompt = пустой, агент-цикла нет). Готовая UI основа под M3.
+M2 (RAG) — in progress. See `DESIGN.md` §10.

@@ -14,7 +14,7 @@ import {
   Text,
   Box,
 } from '@mantine/core';
-import { IconFolder, IconFile } from '@tabler/icons-react';
+import { IconFolder, IconFile, IconCopy, IconClipboard } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
   CreateProfile,
@@ -353,13 +353,61 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
           />
         </Group>
 
-        <TagsInput
-          label="Extra args"
-          description="Space- or comma-separated CLI flags appended after the standard ones (e.g. --fit, --flash-attn)."
-          value={form.ExtraArgs}
-          onChange={(v) => update('ExtraArgs', v)}
-          splitChars={[' ', ',']}
-        />
+        <Box>
+          <TagsInput
+            label={
+              <Group gap={6} justify="space-between" w="100%">
+                <Text size="sm" fw={500}>Extra args</Text>
+                <Group gap={4}>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    title="Copy as space-separated string"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(form.ExtraArgs.join(' '));
+                        notifications.show({
+                          color: 'teal',
+                          title: 'Copied',
+                          message: `${form.ExtraArgs.length} arg(s) on clipboard.`,
+                        });
+                      } catch (e: any) {
+                        notifications.show({ color: 'red', title: 'Copy failed', message: String(e) });
+                      }
+                    }}
+                  >
+                    <IconCopy size={14} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    title="Paste from clipboard (whitespace-split)"
+                    onClick={async () => {
+                      try {
+                        const text = await navigator.clipboard.readText();
+                        const parts = text.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+                        update('ExtraArgs', parts);
+                        notifications.show({
+                          color: 'teal',
+                          title: 'Pasted',
+                          message: `${parts.length} arg(s) imported.`,
+                        });
+                      } catch (e: any) {
+                        notifications.show({ color: 'red', title: 'Paste failed', message: String(e) });
+                      }
+                    }}
+                  >
+                    <IconClipboard size={14} />
+                  </ActionIcon>
+                </Group>
+              </Group>
+            }
+            description="Space- or comma-separated CLI flags appended after the standard ones (e.g. --fit, --flash-attn)."
+            value={form.ExtraArgs}
+            onChange={(v) => update('ExtraArgs', v)}
+            splitChars={[' ', ',']}
+          />
+        </Box>
 
         <Group grow>
           <NumberInput
