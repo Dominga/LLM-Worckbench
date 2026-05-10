@@ -114,6 +114,10 @@ export function ReadProjectFile(arg1, arg2) {
   return window['go']['main']['App']['ReadProjectFile'](arg1, arg2);
 }
 
+export function RebuildIndex(arg1) {
+  return window['go']['main']['App']['RebuildIndex'](arg1);
+}
+
 export function RenameSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameSession'](arg1, arg2, arg3);
 }

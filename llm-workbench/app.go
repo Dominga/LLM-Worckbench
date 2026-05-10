@@ -20,6 +20,7 @@ type App struct {
 	files    *FileService
 	sessions *SessionService
 	indexes  *IndexRegistry
+	indexer  *FileIndexer
 }
 
 func NewApp() *App {
@@ -64,6 +65,7 @@ func (a *App) startup(ctx context.Context) {
 		a.files = NewFileService(prs)
 		a.sessions = NewSessionService(prs)
 		a.indexes = NewIndexRegistry(prs)
+		a.indexer = NewFileIndexer(prs, a.indexes)
 	}
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
@@ -100,6 +102,17 @@ func (a *App) GetIndexStats(projectID string) (IndexStats, error) {
 		return IndexStats{}, err
 	}
 	return idx.Stats(), nil
+}
+
+// RebuildIndex triggers a synchronous file-walk + chunk upsert for
+// the given project. Embedding generation is a separate pass (PR11);
+// this binding only refreshes the chunks/chunks_fts tables. Returns
+// the per-run progress summary.
+func (a *App) RebuildIndex(projectID string) (IndexProgress, error) {
+	if a.indexer == nil {
+		return IndexProgress{}, fmt.Errorf("indexer not available")
+	}
+	return a.indexer.Reindex(projectID)
 }
 
 // ──────────────────────────── Config ────────────────────────────────

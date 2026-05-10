@@ -58,6 +58,8 @@ export function ProfileStatus(arg1:string):Promise<main.InstanceStatus>;
 
 export function ReadProjectFile(arg1:string,arg2:string):Promise<main.FileContent>;
 
+export function RebuildIndex(arg1:string):Promise<main.IndexProgress>;
+
 export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<main.Session>;
 
 export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;

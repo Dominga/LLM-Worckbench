@@ -2,7 +2,7 @@
 
 Local LLM workbench — Wails + llama.cpp desktop app for chat, RAG, and agent workflows over your own models.
 
-> **Status:** Milestone 0 (spike). Single chat profile, hardcoded `llama-server` config via `.env`. Projects, RAG, and agent loop are designed but not yet implemented.
+> **Status:** Milestone 2 (RAG) in progress. M0 (spike) and M1 (MVP — multi-profile supervisor, projects, sessions, V5 UI) shipped. Agent loop and scripting layer remain.
 
 ## What it is
 
@@ -36,24 +36,103 @@ See [DESIGN.md](DESIGN.md) for the full design doc (in Russian).
 
 ## Build & run
 
-All commands run from `llm-workbench/`. On Debian 13 (and other distros shipping libwebkit2gtk-4.1) the `webkit2_41` build tag is required.
+All commands run from `llm-workbench/`. The app embeds SQLite via CGo (mattn/go-sqlite3) for the M2 RAG index, so a working C toolchain is required on every platform.
+
+### Build tags
+
+Two build tags are required on every `wails dev` / `wails build`:
+
+| Tag | Why |
+|---|---|
+| `webkit2_41` | Linux only. Needed on distros shipping `libwebkit2gtk-4.1` (Debian 13, Ubuntu 24.04+, Fedora 40+). Harmless on Windows but the Wails CLI ignores it there. |
+| `sqlite_fts5` | Enables the FTS5 module in mattn/go-sqlite3, used by the RAG index for BM25 retrieval. Required on every platform. |
+
+Always pass them via `-tags "webkit2_41 sqlite_fts5"` (or `-tags sqlite_fts5` on Windows).
+
+### Linux (Debian 13 / Ubuntu 24.04+ / Fedora 40+)
+
+System packages:
+
+```bash
+# Debian / Ubuntu
+sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev nodejs npm
+
+# Fedora
+sudo dnf install gcc gcc-c++ make pkgconfig webkit2gtk4.1-devel gtk3-devel nodejs npm
+```
+
+Toolchain:
+
+- Go 1.23+ from [go.dev/dl](https://go.dev/dl/) (or your distro's `golang` package if recent enough).
+- Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@latest` — installs to `$HOME/go/bin`.
+
+Build:
 
 ```bash
 cd llm-workbench
-cp .env.example .env        # then edit paths to your llama-server + model
+cp .env.example .env        # then edit paths to your llama-server + model (legacy seed, M1+ uses profiles.toml)
 
 # Dev (hot reload, devtools at http://localhost:34115)
-PATH=$PATH:$HOME/go/bin wails dev -tags webkit2_41
+PATH=$PATH:$HOME/go/bin wails dev -tags "webkit2_41 sqlite_fts5"
 
 # Production build → build/bin/llm-workbench
-PATH=$PATH:$HOME/go/bin wails build -tags webkit2_41
+PATH=$PATH:$HOME/go/bin wails build -tags "webkit2_41 sqlite_fts5"
 ```
 
-After changing exported methods on the `App` struct, regenerate the JS bindings:
+### Windows 10 / 11
+
+Toolchain:
+
+- **Go 1.23+** — installer from [go.dev/dl](https://go.dev/dl/).
+- **Node.js LTS** — installer from [nodejs.org](https://nodejs.org/).
+- **C compiler for CGo** — required by mattn/go-sqlite3. **Visual Studio (MSVC / `cl.exe`) does NOT work with Go CGo** — you need a gcc-style compiler. Pick whichever is least intrusive:
+
+  | Option | How |
+  |---|---|
+  | **WinLibs** *(smallest, no installer)* | Download a MinGW-w64 zip from [winlibs.com](https://winlibs.com/), extract to e.g. `C:\winlibs`, add `C:\winlibs\mingw64\bin` to `PATH`. |
+  | **TDM-GCC** | One-click installer: [jmeubank.github.io/tdm-gcc](https://jmeubank.github.io/tdm-gcc/). |
+  | **scoop** | `scoop install mingw` |
+  | **chocolatey** | `choco install mingw` |
+  | **MSYS2** | Heaviest. From [msys2.org](https://www.msys2.org/): in the MinGW64 shell run `pacman -S --needed mingw-w64-x86_64-gcc`, then add `C:\msys64\mingw64\bin` to `PATH`. |
+
+  Verify with `gcc --version` in a fresh `cmd.exe` or PowerShell. Any of the above is fine — they all expose the same `gcc.exe` binary that CGo needs.
+- **Wails CLI**: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`. Installs to `%USERPROFILE%\go\bin` — make sure that directory is on `PATH`.
+- **WebView2 runtime** — preinstalled on Windows 11 and on most Windows 10 systems via Edge. If `wails doctor` complains, grab the Evergreen Bootstrapper from Microsoft.
+
+Build (PowerShell):
+
+```powershell
+cd llm-workbench
+copy .env.example .env       # edit to point at your llama-server.exe + model
+
+# Dev
+wails dev -tags sqlite_fts5
+
+# Production build → build\bin\llm-workbench.exe
+wails build -tags sqlite_fts5
+```
+
+The `webkit2_41` tag is Linux-specific and not needed on Windows. If you see `error: 'gcc' executable file not found in %PATH%`, your MinGW install is not on `PATH` yet — open a fresh shell after editing it.
+
+### After changing Go bindings
+
+After adding/renaming any exported method on the `App` struct, regenerate the TypeScript bindings the frontend imports:
 
 ```bash
-PATH=$PATH:$HOME/go/bin wails generate module
+PATH=$PATH:$HOME/go/bin wails generate module     # or: wails generate module  (Windows)
 ```
+
+### After changing Go dependencies
+
+`vendor/` is committed — refresh it whenever you touch `go.mod`:
+
+```bash
+cd llm-workbench
+go get <pkg>          # or: go mod tidy
+go mod vendor
+```
+
+Commit `go.mod`, `go.sum`, and `vendor/` together. Never edit files under `vendor/` by hand.
 
 ## Configuration
 
@@ -81,9 +160,9 @@ The frontend is single-page (`App.tsx`) with an AppShell: header (start/stop + h
 
 ## Roadmap
 
-- **M0 — spike** *(current)*: Wails shell, `llama-server` supervisor, streaming chat into editor.
-- **M1 — MVP**: one profile, one project, real chat history.
-- **M2 — RAG**: embeddings, `sqlite-vec` index, retrieval over project content.
+- **M0 — spike** ✅: Wails shell, `llama-server` supervisor, streaming chat into editor.
+- **M1 — MVP** ✅: multi-profile supervisor, projects, sessions, V5 UI.
+- **M2 — RAG** *(in progress)*: per-project SQLite index with FTS5 + `sqlite-vec`, embeddings, hybrid retrieval.
 - **M3 — agent loop**: tools, modes, sandboxed `ProjectService` for FS ops.
 - **M4 — scripting**.
 - **M5 — build orchestrator**: manage `llama.cpp` builds and model bundles.

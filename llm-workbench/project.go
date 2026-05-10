@@ -30,8 +30,39 @@ type Project struct {
 // global registry holds the user-facing list, this file holds whatever
 // lives with the project itself.
 type projectMeta struct {
-	Version int    `toml:"version"`
-	Name    string `toml:"name"`
+	Version  int            `toml:"version"`
+	Name     string         `toml:"name"`
+	Indexing IndexingConfig `toml:"indexing,omitempty"`
+}
+
+// IndexingConfig is the `[indexing]` section of project.toml. Drives
+// FileIndexer's file-walk and Chunker's split parameters. All fields
+// have defaults so an empty section is valid.
+type IndexingConfig struct {
+	Include       []string `toml:"include,omitempty"`
+	Exclude       []string `toml:"exclude,omitempty"`
+	ChunkChars    int      `toml:"chunk_chars,omitempty"`
+	OverlapChars  int      `toml:"overlap_chars,omitempty"`
+}
+
+// DefaultIndexingConfig returns the baseline rules. The exclude list
+// covers the paths this app itself writes to plus the most common
+// build/vendor noise so a fresh `git init`'d project does not index its
+// own dependencies.
+func DefaultIndexingConfig() IndexingConfig {
+	return IndexingConfig{
+		Include: []string{"**/*.md", "**/*.markdown", "**/*.txt"},
+		Exclude: []string{
+			ProjectDirName + "/**",
+			".git/**",
+			"node_modules/**",
+			"vendor/**",
+			"build/**",
+			"dist/**",
+		},
+		ChunkChars:   2048,
+		OverlapChars: 256,
+	}
 }
 
 // projectsFile is the global registry shape.

@@ -84,9 +84,13 @@ DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlit
       `EnsureVecTable(modelID, dim)` once the embed profile is known (PR11).
       Build tags now `webkit2_41 sqlite_fts5` — CLAUDE.md updated.
       App binding `GetIndexStats(projectID)` wired.
-- [ ] **PR10** — `Chunker` (recursive 512/64 tokens, md-aware on headings/paragraphs).
-      `FileIndexer.Walk(projectID)` → enumerate files per `[indexing]` rules from project.toml.
-      Idempotent: skip chunks whose `sha256` already present.
+- [x] **PR10** — `Chunker` (paragraph-cascade-to-hard-split, ~512/64 tokens via 4 chars/tok approx).
+      `FileIndexer.Reindex(projectID)` walks the project tree per `[indexing]` rules from
+      `project.toml` (`include`/`exclude` doublestar globs, `chunk_chars`, `overlap_chars`),
+      replace-on-change per file, GCs chunks for paths gone from disk. Tests cover empty input,
+      single para, multi-para overlap, oversize hard-split, SHA determinism, glob include/exclude,
+      end-to-end reindex (idempotent → mutate → delete → FTS5 search).
+      App binding `RebuildIndex(projectID)` returns `IndexProgress` (no streaming yet — PR14).
 - [ ] **PR11** — `EmbedClient` POSTs to llama-server `/v1/embeddings` (kind=embed profile).
       Batched writes to `vec_chunks`. Auto-start linked embed sidecar before indexing if not running.
 - [ ] **PR12** — Hybrid retrieval: dense (`SELECT ... FROM vec_chunks ORDER BY vec_distance_cosine`)

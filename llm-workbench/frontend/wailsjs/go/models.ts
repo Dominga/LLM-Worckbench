@@ -129,6 +129,30 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class IndexProgress {
+	    filesProcessed: number;
+	    filesSkipped: number;
+	    chunksAdded: number;
+	    chunksRemoved: number;
+	    filesRemoved: number;
+	    errors?: string[];
+	    durationMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filesProcessed = source["filesProcessed"];
+	        this.filesSkipped = source["filesSkipped"];
+	        this.chunksAdded = source["chunksAdded"];
+	        this.chunksRemoved = source["chunksRemoved"];
+	        this.filesRemoved = source["filesRemoved"];
+	        this.errors = source["errors"];
+	        this.durationMs = source["durationMs"];
+	    }
+	}
 	export class IndexStats {
 	    projectId: string;
 	    path: string;
