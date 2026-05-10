@@ -84,9 +84,15 @@ DESIGN.md §5.5 + §9 M4. Decisions:
       source) ScriptResult`. Tests cover log capture, fs read/write/list, RAG
       sparse search, error surfacing, return-value export, project global,
       path-traversal containment.
-- [ ] **PR23** — Script storage at `<project>/.llm-workshop/scripts/*.js`.
-      `ListScripts(projectID)`, `LoadScript(projectID, name)`,
-      `SaveScript(projectID, name, source)`. Atomic write via tmp+rename.
+- [x] **PR23** — `scripts_store.go` `ScriptStore` manages
+      `<project>/.llm-workshop/scripts/<name>.js`. Bindings:
+      `ListScripts`, `LoadScript`, `SaveScript`, `DeleteScript`. Save is atomic
+      (tmp+rename); name validation enforces `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`
+      so traversal/space/slash names are rejected. List sorts by name, skips
+      non-`.js` siblings. Tests: save+load roundtrip, sorted list, delete (and
+      no-op on missing), overwrite, name-validation matrix (rejects `""`,
+      `../escape`, `with space`, `weird/slash`, `dot..`; accepts snake_case,
+      kebab-case, Mixed.123), list ignoring `notes.txt`.
 - [ ] **PR24** — Prompt Lab tab (currently disabled placeholder). CodeMirror JS
       editor + Run button + output panel. Wires `RunScript` and renders
       `ScriptResult.output[]` + `Return` JSON.

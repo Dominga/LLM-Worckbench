@@ -20,6 +20,8 @@ export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteProject(arg1:string):Promise<void>;
 
+export function DeleteScript(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteSession(arg1:string,arg2:string):Promise<void>;
 
 export function GetConfig():Promise<Record<string, any>>;
@@ -44,9 +46,13 @@ export function ListProfiles():Promise<Array<main.Profile>>;
 
 export function ListProjects():Promise<Array<main.Project>>;
 
+export function ListScripts(arg1:string):Promise<Array<main.ScriptFile>>;
+
 export function ListSessions(arg1:string):Promise<Array<main.Session>>;
 
 export function LoadInitialDoc():Promise<main.InitialDoc>;
+
+export function LoadScript(arg1:string,arg2:string):Promise<string>;
 
 export function OpenProject(arg1:string):Promise<main.Project>;
 
@@ -75,6 +81,8 @@ export function RestartProfile(arg1:string):Promise<void>;
 export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.AgentSnapshot>;
 
 export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
+
+export function SaveScript(arg1:string,arg2:string,arg3:string):Promise<main.ScriptFile>;
 
 export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<Array<main.ChunkHit>>;
 

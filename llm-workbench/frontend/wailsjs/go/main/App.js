@@ -38,6 +38,10 @@ export function DeleteProject(arg1) {
   return window['go']['main']['App']['DeleteProject'](arg1);
 }
 
+export function DeleteScript(arg1, arg2) {
+  return window['go']['main']['App']['DeleteScript'](arg1, arg2);
+}
+
 export function DeleteSession(arg1, arg2) {
   return window['go']['main']['App']['DeleteSession'](arg1, arg2);
 }
@@ -86,12 +90,20 @@ export function ListProjects() {
   return window['go']['main']['App']['ListProjects']();
 }
 
+export function ListScripts(arg1) {
+  return window['go']['main']['App']['ListScripts'](arg1);
+}
+
 export function ListSessions(arg1) {
   return window['go']['main']['App']['ListSessions'](arg1);
 }
 
 export function LoadInitialDoc() {
   return window['go']['main']['App']['LoadInitialDoc']();
+}
+
+export function LoadScript(arg1, arg2) {
+  return window['go']['main']['App']['LoadScript'](arg1, arg2);
 }
 
 export function OpenProject(arg1) {
@@ -148,6 +160,10 @@ export function RevertLastAgentSnapshot(arg1, arg2) {
 
 export function RunScript(arg1, arg2) {
   return window['go']['main']['App']['RunScript'](arg1, arg2);
+}
+
+export function SaveScript(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveScript'](arg1, arg2, arg3);
 }
 
 export function SearchProject(arg1, arg2, arg3, arg4, arg5, arg6) {

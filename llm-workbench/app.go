@@ -28,6 +28,7 @@ type App struct {
 	approvals *ApprovalManager
 	snapshots *SnapshotService
 	scripting *ScriptingService
+	scripts   *ScriptStore
 }
 
 func NewApp() *App {
@@ -90,6 +91,7 @@ func (a *App) startup(ctx context.Context) {
 	a.chat.Attach(ctx)
 	a.renderer = NewRenderer()
 	a.scripting = NewScriptingService(a.projects, a.files, a.chat, a.rag, a.profiles, a.indexes)
+	a.scripts = NewScriptStore(a.projects)
 
 	// Hook the agent loop into ChatService so sessions whose mode has
 	// a tool whitelist run through the multi-turn tool loop. Must
@@ -165,6 +167,42 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
 	}
 	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
+}
+
+// ─────────────────────────── Scripts store ──────────────────────────
+
+// ListScripts returns the persisted Prompt-Lab scripts for the
+// project, sorted by name. Empty directory returns an empty slice.
+func (a *App) ListScripts(projectID string) ([]ScriptFile, error) {
+	if a.scripts == nil {
+		return nil, fmt.Errorf("scripts store unavailable")
+	}
+	return a.scripts.List(projectID)
+}
+
+// LoadScript returns the source for a named script.
+func (a *App) LoadScript(projectID, name string) (string, error) {
+	if a.scripts == nil {
+		return "", fmt.Errorf("scripts store unavailable")
+	}
+	return a.scripts.Load(projectID, name)
+}
+
+// SaveScript writes the script atomically and returns the updated
+// ScriptFile metadata. Overwrites without prompting.
+func (a *App) SaveScript(projectID, name, source string) (ScriptFile, error) {
+	if a.scripts == nil {
+		return ScriptFile{}, fmt.Errorf("scripts store unavailable")
+	}
+	return a.scripts.Save(projectID, name, source)
+}
+
+// DeleteScript removes the named script. No-op if the file is missing.
+func (a *App) DeleteScript(projectID, name string) error {
+	if a.scripts == nil {
+		return fmt.Errorf("scripts store unavailable")
+	}
+	return a.scripts.Delete(projectID, name)
 }
 
 // RunScript executes a Prompt-Lab script under the project's
