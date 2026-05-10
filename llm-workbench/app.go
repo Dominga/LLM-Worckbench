@@ -19,6 +19,7 @@ type App struct {
 	projects *ProjectService
 	files    *FileService
 	sessions *SessionService
+	indexes  *IndexRegistry
 }
 
 func NewApp() *App {
@@ -62,6 +63,7 @@ func (a *App) startup(ctx context.Context) {
 		a.projects = prs
 		a.files = NewFileService(prs)
 		a.sessions = NewSessionService(prs)
+		a.indexes = NewIndexRegistry(prs)
 	}
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
@@ -80,6 +82,24 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.registry != nil {
 		a.registry.StopAll()
 	}
+	if a.indexes != nil {
+		a.indexes.CloseAll()
+	}
+}
+
+// ─────────────────────────── RAG bindings ────────────────────────────
+
+// GetIndexStats returns the current snapshot of the index for the
+// given project. Used by Servers/Project tabs and debug surfaces.
+func (a *App) GetIndexStats(projectID string) (IndexStats, error) {
+	if a.indexes == nil {
+		return IndexStats{}, fmt.Errorf("indexes not available")
+	}
+	idx, err := a.indexes.For(projectID)
+	if err != nil {
+		return IndexStats{}, err
+	}
+	return idx.Stats(), nil
 }
 
 // ──────────────────────────── Config ────────────────────────────────

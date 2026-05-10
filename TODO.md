@@ -70,6 +70,34 @@ After B6 the disabled prop was removed and the click handler always runs (toast 
 
 **Files:** `frontend/src/tabs/ServersTab.tsx` (logs tabs row).
 
-## Next milestone
+## Milestone 2 — RAG
 
-M2 (RAG) — in progress. See `DESIGN.md` §10.
+DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlite-vec). Default embed model: **BGE-M3** (1024 dim, 8192 ctx, multilingual) — referenced in seed/UI hints but not bundled (user provides GGUF).
+
+### PRs
+
+- [x] **PR9** — `mattn/go-sqlite3` + `sqlite-vec-go-bindings/cgo` deps (vendored).
+      Per-project `<project>/.llm-workshop/index.db` opened lazily via `IndexRegistry`.
+      Schema: `chunks(id, path, start_byte, end_byte, content, sha256, mtime, created_at)`,
+      `chunks_fts` (FTS5 contentless mirror, triggers for ai/ad/au), `meta(key, value)` for
+      `schema_version`/`embed_model_id`/`embed_dim`. `vec_chunks` is created lazily by
+      `EnsureVecTable(modelID, dim)` once the embed profile is known (PR11).
+      Build tags now `webkit2_41 sqlite_fts5` — CLAUDE.md updated.
+      App binding `GetIndexStats(projectID)` wired.
+- [ ] **PR10** — `Chunker` (recursive 512/64 tokens, md-aware on headings/paragraphs).
+      `FileIndexer.Walk(projectID)` → enumerate files per `[indexing]` rules from project.toml.
+      Idempotent: skip chunks whose `sha256` already present.
+- [ ] **PR11** — `EmbedClient` POSTs to llama-server `/v1/embeddings` (kind=embed profile).
+      Batched writes to `vec_chunks`. Auto-start linked embed sidecar before indexing if not running.
+- [ ] **PR12** — Hybrid retrieval: dense (`SELECT ... FROM vec_chunks ORDER BY vec_distance_cosine`)
+      + BM25 (`SELECT ... FROM chunks_fts WHERE chunks_fts MATCH ?`). RRF combiner.
+      `RAGService.Search(projectID, query, k)` returns ranked `[]ChunkHit`.
+- [ ] **PR13** — `/search …` slash-command parsed in chat input → results panel inline (chips with file + start–end).
+      No automatic context-injection yet (that lands in M3 with the agent loop).
+- [ ] **PR14** — Reindex job: explicit "Rebuild index" button + on-save trigger via existing 3s polling tick.
+      Progress event `rag:index:progress:<projectID>` with chunks_done / chunks_total.
+
+### Open
+
+- Embedding model is per-project? Probably yes — `[rag] embed_profile_id` in `project.toml`. Decide in PR11.
+- Reranker (`bge-reranker-v2-m3`) — defer to M6 polish.

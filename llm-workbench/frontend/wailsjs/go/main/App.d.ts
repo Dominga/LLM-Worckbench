@@ -24,6 +24,8 @@ export function GetConfig():Promise<Record<string, any>>;
 
 export function GetGPUMetrics():Promise<main.GPUMetrics>;
 
+export function GetIndexStats(arg1:string):Promise<main.IndexStats>;
+
 export function GetProfile(arg1:string):Promise<main.Profile>;
 
 export function GetSession(arg1:string,arg2:string):Promise<main.Session>;

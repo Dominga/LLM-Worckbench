@@ -129,6 +129,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class IndexStats {
+	    projectId: string;
+	    path: string;
+	    chunkCount: number;
+	    embedModelId: string;
+	    embedDim: number;
+	    schemaVer: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectId = source["projectId"];
+	        this.path = source["path"];
+	        this.chunkCount = source["chunkCount"];
+	        this.embedModelId = source["embedModelId"];
+	        this.embedDim = source["embedDim"];
+	        this.schemaVer = source["schemaVer"];
+	    }
+	}
 	export class InitialDoc {
 	    path: string;
 	    content: string;

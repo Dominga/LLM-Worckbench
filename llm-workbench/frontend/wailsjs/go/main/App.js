@@ -46,6 +46,10 @@ export function GetGPUMetrics() {
   return window['go']['main']['App']['GetGPUMetrics']();
 }
 
+export function GetIndexStats(arg1) {
+  return window['go']['main']['App']['GetIndexStats'](arg1);
+}
+
 export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
 }
