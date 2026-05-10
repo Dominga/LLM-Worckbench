@@ -79,7 +79,8 @@ Milestone progression: M0 spike (current) → M1 MVP (one profile, project, chat
 
 ## Conventions
 
-- Russian for design docs and user-facing UI labels can mix with English; existing prose is bilingual. Code identifiers and comments stay English.
+- **Documentation language: English.** All new docs (README, contributor docs, inline `*.md` notes) must be written in English. Existing Russian design docs (e.g. `DESIGN.md`) stay as-is until explicitly translated; do not rewrite them on the fly. User-facing UI labels may stay bilingual where the existing prose already mixes both.
+- Code identifiers and comments stay English.
 - File system is the source of truth for content; SQLite (future) only for derived data (index, chat history, embedding cache).
 - All file ops the agent will eventually do must go through a sandboxed `ProjectService` — don't add direct `os.WriteFile` calls in handler code when project-scoped paths are involved.
 - External processes (llama.cpp, future Python sidecars) communicate via HTTP or argv+stdout JSON. No CGo embedding.

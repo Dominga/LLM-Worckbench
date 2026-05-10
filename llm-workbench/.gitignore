@@ -3,3 +3,7 @@ node_modules
 frontend/dist
 .env
 *.log
+
+# Stray binary from `go build` at the package root (production output
+# lives in build/bin/ via wails build).
+/llm-workbench

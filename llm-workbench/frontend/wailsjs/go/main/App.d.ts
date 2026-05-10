@@ -4,16 +4,82 @@ import {main} from '../models';
 
 export function ChatCancel(arg1:string):Promise<void>;
 
-export function ChatStream(arg1:Array<main.ChatMessage>,arg2:number):Promise<main.StreamHandle>;
+export function ChatStream(arg1:string,arg2:Array<main.ChatMessage>,arg3:number):Promise<main.StreamHandle>;
+
+export function CreateProfile(arg1:main.Profile):Promise<main.Profile>;
+
+export function CreateProject(arg1:string,arg2:string):Promise<main.Project>;
+
+export function CreateSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.Session>;
+
+export function CurrentProject():Promise<main.Project>;
+
+export function DeleteProfile(arg1:string):Promise<void>;
+
+export function DeleteProject(arg1:string):Promise<void>;
+
+export function DeleteSession(arg1:string,arg2:string):Promise<void>;
 
 export function GetConfig():Promise<Record<string, any>>;
 
+export function GetGPUMetrics():Promise<main.GPUMetrics>;
+
+export function GetProfile(arg1:string):Promise<main.Profile>;
+
+export function GetSession(arg1:string,arg2:string):Promise<main.Session>;
+
+export function GetSystemMetrics():Promise<main.SystemMetrics>;
+
+export function ListFiles(arg1:string):Promise<Array<main.FileNode>>;
+
+export function ListModes():Promise<Array<main.Mode>>;
+
+export function ListProfiles():Promise<Array<main.Profile>>;
+
+export function ListProjects():Promise<Array<main.Project>>;
+
+export function ListSessions(arg1:string):Promise<Array<main.Session>>;
+
 export function LoadInitialDoc():Promise<main.InitialDoc>;
+
+export function OpenProject(arg1:string):Promise<main.Project>;
+
+export function PickDirectory(arg1:string):Promise<string>;
+
+export function PickFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function ProfileLogs(arg1:string):Promise<Array<string>>;
+
+export function ProfileMetrics(arg1:string):Promise<main.InstanceMetrics>;
+
+export function ProfileStatus(arg1:string):Promise<main.InstanceStatus>;
+
+export function ReadProjectFile(arg1:string,arg2:string):Promise<main.FileContent>;
+
+export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<main.Session>;
 
 export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;
 
+export function RestartProfile(arg1:string):Promise<void>;
+
 export function ServerStatus():Promise<main.Status>;
+
+export function SessionChatStream(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.StreamHandle>;
+
+export function SessionMessages(arg1:string,arg2:string):Promise<Array<main.SessionMessage>>;
+
+export function SetActiveProject(arg1:string):Promise<main.Project>;
+
+export function StartProfile(arg1:string):Promise<void>;
 
 export function StartServer():Promise<void>;
 
+export function StopProfile(arg1:string):Promise<void>;
+
 export function StopServer():Promise<void>;
+
+export function UpdateProfile(arg1:string,arg2:main.Profile):Promise<main.Profile>;
+
+export function UpdateSessionMode(arg1:string,arg2:string,arg3:string):Promise<main.Session>;
+
+export function WriteProjectFile(arg1:string,arg2:string,arg3:string):Promise<void>;

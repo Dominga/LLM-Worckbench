@@ -5,6 +5,10 @@ git.sr.ht/~jackmordaunt/go-toast/v2/internal/winrt/data/xml/dom
 git.sr.ht/~jackmordaunt/go-toast/v2/internal/winrt/ui/notifications
 git.sr.ht/~jackmordaunt/go-toast/v2/tmpl
 git.sr.ht/~jackmordaunt/go-toast/v2/wintoast
+# github.com/BurntSushi/toml v1.6.0
+## explicit; go 1.18
+github.com/BurntSushi/toml
+github.com/BurntSushi/toml/internal
 # github.com/aymerick/douceur v0.2.0
 ## explicit
 github.com/aymerick/douceur/css

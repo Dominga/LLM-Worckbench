@@ -1,284 +1,662 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  AppShell,
-  Group,
-  Button,
-  Text,
-  Badge,
-  Textarea,
-  Stack,
-  ScrollArea,
-  Code,
-  Divider,
-  Loader,
-  ActionIcon,
-  SegmentedControl,
-} from '@mantine/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notifications } from '@mantine/notifications';
-import { IconPlayerPlay, IconPlayerStop, IconSend, IconX, IconRefresh } from '@tabler/icons-react';
-import { MarkdownEditor, EditorHandle } from './components/Editor';
-import { MarkdownPreview } from './components/Preview';
 import {
-  StartServer,
-  StopServer,
-  ServerStatus,
-  GetConfig,
-  ChatStream,
-  ChatCancel,
-  LoadInitialDoc,
+  ListProfiles,
+  ProfileStatus as GetProfileStatus,
+  ProfileMetrics as GetProfileMetrics,
+  ProfileLogs as GetProfileLogs,
+  StartProfile,
+  StopProfile,
+  RestartProfile,
+  DeleteProfile,
+  ListProjects,
+  CurrentProject as GetCurrentProject,
+  OpenProject,
+  CreateProject,
+  SetActiveProject,
+  DeleteProject,
+  ListFiles,
+  ReadProjectFile,
+  PickDirectory,
+  ListSessions,
+  CreateSession,
+  RenameSession,
+  DeleteSession,
+  UpdateSessionMode,
+  SessionMessages,
+  GetSystemMetrics,
+  GetGPUMetrics,
 } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
+import { TitleBar } from './shell/TitleBar';
+import { Sidebar } from './shell/Sidebar';
+import { MainPane } from './shell/MainPane';
+import {
+  Tab,
+  SidebarSegment,
+  Profile,
+  Project,
+  FileNode,
+  InstanceStatus,
+  InstanceMetrics,
+  Session,
+  SessionMessageBackend,
+  SysMetricsPayload,
+  emptyInstanceStatus,
+  emptyInstanceMetrics,
+} from './shell/types';
+import { ProfileForm } from './components/ProfileForm';
+import { NewSessionModal } from './components/NewSessionModal';
+import { ConfirmModal } from './components/ConfirmModal';
+import { V5 } from './theme';
 
-type Status = { running: boolean; pid: number; baseUrl: string; healthy: boolean };
-
-const INITIAL_DOC = `# llm-workbench — Milestone 0 spike
-
-Editor pane is a CodeMirror 6 instance with markdown mode.
-Use the chat box on the left to send a prompt; assistant tokens
-will be appended **here** as they stream from llama-server.
-
----
-
-`;
+const LOG_RING_SIZE = 1000;
+const FILE_TREE_POLL_MS = 3000;
 
 export default function App() {
-  const [status, setStatus] = useState<Status>({ running: false, pid: 0, baseUrl: '', healthy: false });
-  const [cfg, setCfg] = useState<Record<string, any>>({});
-  const [logs, setLogs] = useState<string[]>([]);
-  const [prompt, setPrompt] = useState('');
-  const [streamId, setStreamId] = useState<string | null>(null);
-  const [streaming, setStreaming] = useState(false);
-  const editorRef = useRef<EditorHandle | null>(null);
-  const logScrollRef = useRef<HTMLDivElement | null>(null);
-  const docLoadedRef = useRef(false);
-  const [docInfo, setDocInfo] = useState<{ path: string; bytes: number; loadedMs: number; renderMs: number } | null>(null);
-  const [view, setView] = useState<'edit' | 'preview'>('edit');
-  const [previewSource, setPreviewSource] = useState('');
-  const [previewStats, setPreviewStats] = useState<{ parseMs: number; bytes: number; htmlSize: number; totalMs: number } | null>(null);
+  const [tab, setTab] = useState<Tab>('chat');
+  const [segment, setSegment] = useState<SidebarSegment>('sessions');
 
-  const switchView = (next: 'edit' | 'preview') => {
-    if (next === 'preview') {
-      const src = editorRef.current?.getValue() ?? '';
-      setPreviewSource(src);
-      setPreviewStats(null);
-    }
-    setView(next);
-  };
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('');
+  const [statusByProfile, setStatusByProfile] = useState<Record<string, InstanceStatus>>({});
+  const [metricsByProfile, setMetricsByProfile] = useState<Record<string, InstanceMetrics>>({});
+  const [logsByProfile, setLogsByProfile] = useState<Record<string, string[]>>({});
 
-  const loadDoc = async () => {
-    const t0 = performance.now();
-    const res = await LoadInitialDoc();
-    if (!res.content) return;
-    const editor = editorRef.current;
-    if (!editor) return;
-    editor.setValue(res.content);
-    const renderMs = Math.round(performance.now() - t0 - res.loadedMs);
-    setDocInfo({ path: res.path, bytes: res.bytes, loadedMs: res.loadedMs, renderMs });
-  };
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [fileTree, setFileTree] = useState<FileNode[]>([]);
+  const [activeFilePath, setActiveFilePath] = useState<string>('');
+  const [activeFileContent, setActiveFileContent] = useState<string>('');
+  const fileTreeIntervalRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    GetConfig().then(setCfg).catch(() => {});
-    ServerStatus().then(setStatus).catch(() => {});
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>('');
+  const [activeSessionMessages, setActiveSessionMessages] = useState<SessionMessageBackend[]>([]);
 
-    EventsOn('llama:status', (s: Status) => setStatus(s));
-    EventsOn('llama:log', (line: string) => {
-      setLogs((prev) => {
-        const next = [...prev, line];
-        return next.length > 500 ? next.slice(next.length - 500) : next;
+  const [sysMetrics, setSysMetrics] = useState<SysMetricsPayload | null>(null);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
+  const [formInitial, setFormInitial] = useState<Profile | undefined>(undefined);
+
+  const [sessionModalOpen, setSessionModalOpen] = useState(false);
+
+  // Generic confirm-modal slot — replaces window.confirm for all
+  // destructive ops (delete profile / forget project / delete session).
+  // The action runs async; modal stays open with a spinner until it
+  // settles, then closes itself.
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    message: React.ReactNode;
+    confirmLabel?: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+
+  // ───────────────────────── profiles load + subscribe ────────────────
+
+  const reloadProfiles = useCallback(async () => {
+    try {
+      const list = await ListProfiles();
+      setProfiles(list);
+      setActiveProfileId((cur) => {
+        if (cur && list.some((p) => p.ID === cur)) return cur;
+        const firstChat = list.find((p) => p.Kind === 'chat') || list[0];
+        return firstChat ? firstChat.ID : '';
       });
-    });
-    EventsOn('app:fatal', (msg: string) => {
-      notifications.show({ color: 'red', title: 'Fatal', message: msg, autoClose: false });
-    });
-
-    return () => {
-      EventsOff('llama:status');
-      EventsOff('llama:log');
-      EventsOff('app:fatal');
-    };
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Profile load failed', message: String(e) });
+    }
   }, []);
 
   useEffect(() => {
-    if (logScrollRef.current) {
-      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
-    }
-  }, [logs]);
+    reloadProfiles();
+    EventsOn('app:fatal', (msg: string) => {
+      notifications.show({ color: 'red', title: 'Fatal', message: msg, autoClose: false });
+    });
+    EventsOn('sys:metrics', (payload: SysMetricsPayload) => {
+      setSysMetrics(payload);
+    });
+    // Initial pull so KPI cards aren't empty for the first 2 s.
+    Promise.all([GetSystemMetrics(), GetGPUMetrics()])
+      .then(([ram, gpu]) => setSysMetrics({ ram, gpu }))
+      .catch(() => {});
+    return () => {
+      EventsOff('app:fatal');
+      EventsOff('sys:metrics');
+    };
+  }, [reloadProfiles]);
 
-  const onStart = async () => {
+  const profileIdsKey = profiles.map((p) => p.ID).join(',');
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    const channels: string[] = [];
+    for (const p of profiles) {
+      const stEv = `llama:status:${p.ID}`;
+      const mEv = `llama:metrics:${p.ID}`;
+      const lEv = `llama:log:${p.ID}`;
+      channels.push(stEv, mEv, lEv);
+
+      EventsOn(stEv, (st: InstanceStatus) => {
+        setStatusByProfile((prev) => ({ ...prev, [p.ID]: st }));
+      });
+      EventsOn(mEv, (m: InstanceMetrics) => {
+        setMetricsByProfile((prev) => ({ ...prev, [p.ID]: m }));
+      });
+      EventsOn(lEv, (line: string) => {
+        setLogsByProfile((prev) => {
+          const cur = prev[p.ID] || [];
+          const next = cur.length >= LOG_RING_SIZE ? [...cur.slice(1), line] : [...cur, line];
+          return { ...prev, [p.ID]: next };
+        });
+      });
+
+      GetProfileStatus(p.ID)
+        .then((st) => setStatusByProfile((prev) => ({ ...prev, [p.ID]: st })))
+        .catch(() => {});
+      GetProfileMetrics(p.ID)
+        .then((m) => setMetricsByProfile((prev) => ({ ...prev, [p.ID]: m })))
+        .catch(() => {});
+      GetProfileLogs(p.ID)
+        .then((logs) => setLogsByProfile((prev) => ({ ...prev, [p.ID]: logs || [] })))
+        .catch(() => {});
+    }
+    return () => {
+      for (const c of channels) EventsOff(c);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileIdsKey]);
+
+  // ───────────────────────── projects load ────────────────────────────
+
+  const reloadProjects = useCallback(async () => {
     try {
-      await StartServer();
+      const list = await ListProjects();
+      setProjects(list);
+      const cur = await GetCurrentProject();
+      setActiveProject(cur && cur.ID ? cur : null);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Project load failed', message: String(e) });
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadProjects();
+  }, [reloadProjects]);
+
+  const refreshTree = useCallback(async (projectId: string) => {
+    try {
+      const t = await ListFiles(projectId);
+      setFileTree(t || []);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'List files failed', message: String(e) });
+    }
+  }, []);
+
+  // Polling — refresh tree every FILE_TREE_POLL_MS while a project is open.
+  // Per TODO.md decision, fsnotify is intentionally avoided for cross-platform
+  // simplicity; a light polling interval is good enough at the M1 scale.
+  useEffect(() => {
+    if (fileTreeIntervalRef.current != null) {
+      window.clearInterval(fileTreeIntervalRef.current);
+      fileTreeIntervalRef.current = null;
+    }
+    if (!activeProject) {
+      setFileTree([]);
+      return;
+    }
+    refreshTree(activeProject.ID);
+    fileTreeIntervalRef.current = window.setInterval(() => {
+      refreshTree(activeProject.ID);
+    }, FILE_TREE_POLL_MS);
+    return () => {
+      if (fileTreeIntervalRef.current != null) {
+        window.clearInterval(fileTreeIntervalRef.current);
+        fileTreeIntervalRef.current = null;
+      }
+    };
+  }, [activeProject, refreshTree]);
+
+  // ───────────────────────── derived state ────────────────────────────
+
+  const activeProfile = useMemo(
+    () => profiles.find((p) => p.ID === activeProfileId),
+    [profiles, activeProfileId],
+  );
+  const activeStatus = statusByProfile[activeProfileId] || emptyInstanceStatus(activeProfileId);
+  const activeMetrics = metricsByProfile[activeProfileId] || emptyInstanceMetrics(activeProfileId);
+  const activeLogs = logsByProfile[activeProfileId] || [];
+
+  const modelLabel = useMemo(() => {
+    if (!activeProfile?.ModelPath) return undefined;
+    return activeProfile.ModelPath.split('/').pop();
+  }, [activeProfile]);
+
+  // ───────────────────────── server actions ───────────────────────────
+
+  const onStart = async (id: string) => {
+    try {
+      await StartProfile(id);
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Start failed', message: String(e) });
     }
   };
-  const onStop = async () => {
-    await StopServer();
-  };
-
-  const send = async () => {
-    if (!prompt.trim() || streaming) return;
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    editor.appendText(`\n\n## User\n\n${prompt.trim()}\n\n## Assistant\n\n`);
-    const messages = [{ role: 'user', content: prompt.trim() }];
-    setPrompt('');
-    setStreaming(true);
-
+  const onStop = async (id: string) => {
     try {
-      const handle = await ChatStream(messages, 0.7);
-      const id = handle.streamId;
-      setStreamId(id);
-
-      const deltaEvent = `chat:delta:${id}`;
-      const doneEvent = `chat:done:${id}`;
-      const errEvent = `chat:error:${id}`;
-
-      const cleanup = () => {
-        EventsOff(deltaEvent);
-        EventsOff(doneEvent);
-        EventsOff(errEvent);
-        setStreaming(false);
-        setStreamId(null);
-      };
-
-      EventsOn(deltaEvent, (delta: string) => {
-        editorRef.current?.appendText(delta);
-      });
-      EventsOn(doneEvent, () => {
-        cleanup();
-      });
-      EventsOn(errEvent, (msg: string) => {
-        notifications.show({ color: 'red', title: 'Stream error', message: msg });
-        cleanup();
-      });
+      await StopProfile(id);
     } catch (e: any) {
-      notifications.show({ color: 'red', title: 'Chat failed', message: String(e) });
-      setStreaming(false);
+      notifications.show({ color: 'red', title: 'Stop failed', message: String(e) });
+    }
+  };
+  const onRestart = async (id: string) => {
+    try {
+      await RestartProfile(id);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Restart failed', message: String(e) });
     }
   };
 
-  const cancel = async () => {
-    if (streamId) await ChatCancel(streamId);
+  const onCreateProfile = () => {
+    setFormMode('create');
+    setFormInitial(undefined);
+    setFormOpen(true);
+  };
+  const onEditProfile = (p: Profile) => {
+    setFormMode('edit');
+    setFormInitial(p);
+    setFormOpen(true);
+  };
+  const onDeleteProfile = (p: Profile) => {
+    setConfirm({
+      title: 'Delete profile',
+      message: (
+        <>
+          Delete profile <code>{p.ID}</code>?
+          <br />
+          If running it will be stopped first.
+        </>
+      ),
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        try {
+          await DeleteProfile(p.ID);
+          await reloadProfiles();
+          notifications.show({ color: 'gray', title: 'Profile deleted', message: p.ID });
+        } catch (e: any) {
+          notifications.show({ color: 'red', title: 'Delete failed', message: String(e) });
+        }
+      },
+    });
+  };
+
+  // ───────────────────────── project actions ──────────────────────────
+
+  const onOpenProject = async () => {
+    try {
+      const path = await PickDirectory('Open project');
+      if (!path) return;
+      const p = await OpenProject(path);
+      await reloadProjects();
+      setActiveProject(p);
+      setActiveFilePath('');
+      setActiveFileContent('');
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Open failed', message: String(e) });
+    }
+  };
+
+  const onCreateProjectAction = async () => {
+    try {
+      const path = await PickDirectory('Pick directory for new project');
+      if (!path) return;
+      const name = window.prompt('Project name', path.split('/').pop() || 'project');
+      if (name == null) return;
+      const p = await CreateProject(path, name.trim() || path.split('/').pop() || 'project');
+      await reloadProjects();
+      setActiveProject(p);
+      setActiveFilePath('');
+      setActiveFileContent('');
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Create failed', message: String(e) });
+    }
+  };
+
+  const onSelectProject = async (id: string) => {
+    try {
+      const p = await SetActiveProject(id);
+      setActiveProject(p);
+      await reloadProjects();
+      setActiveFilePath('');
+      setActiveFileContent('');
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Switch failed', message: String(e) });
+    }
+  };
+
+  const onDeleteProjectAction = (p: Project) => {
+    setConfirm({
+      title: 'Forget project',
+      message: (
+        <>
+          Forget project <strong>{p.Name}</strong>?
+          <br />
+          Files on disk are NOT deleted; only the registry entry goes.
+        </>
+      ),
+      confirmLabel: 'Forget',
+      onConfirm: async () => {
+        try {
+          await DeleteProject(p.ID);
+          await reloadProjects();
+          if (activeProject?.ID === p.ID) {
+            setActiveProject(null);
+            setActiveFilePath('');
+            setActiveFileContent('');
+          }
+        } catch (e: any) {
+          notifications.show({ color: 'red', title: 'Delete failed', message: String(e) });
+        }
+      },
+    });
+  };
+
+  // ───────────────────────── session actions ──────────────────────────
+
+  const reloadSessions = useCallback(
+    async (proj: Project | null, preferId?: string) => {
+      if (!proj) {
+        setSessions([]);
+        setActiveSessionId('');
+        setActiveSessionMessages([]);
+        return [] as Session[];
+      }
+      try {
+        const list = await ListSessions(proj.ID);
+        setSessions(list);
+        const next = preferId && list.some((s) => s.id === preferId)
+          ? preferId
+          : list.length > 0
+            ? list[0].id
+            : '';
+        setActiveSessionId(next);
+        return list;
+      } catch (e: any) {
+        notifications.show({ color: 'red', title: 'Sessions load failed', message: String(e) });
+        return [] as Session[];
+      }
+    },
+    [],
+  );
+
+  // Reload sessions whenever the active project changes.
+  useEffect(() => {
+    reloadSessions(activeProject);
+  }, [activeProject, reloadSessions]);
+
+  // Load messages whenever the active session changes.
+  useEffect(() => {
+    if (!activeProject || !activeSessionId) {
+      setActiveSessionMessages([]);
+      return;
+    }
+    SessionMessages(activeProject.ID, activeSessionId)
+      .then((msgs) => setActiveSessionMessages(msgs || []))
+      .catch((e: any) =>
+        notifications.show({ color: 'red', title: 'Load messages failed', message: String(e) }),
+      );
+  }, [activeProject, activeSessionId]);
+
+  const onCreateSession = () => {
+    if (!activeProject) {
+      notifications.show({
+        color: 'yellow',
+        title: 'No project',
+        message: 'Open a project before starting a chat.',
+      });
+      return;
+    }
+    setSessionModalOpen(true);
+  };
+
+  const onConfirmCreateSession = async (title: string, modeId: string) => {
+    if (!activeProject) return;
+    try {
+      const sess = await CreateSession(
+        activeProject.ID,
+        title,
+        modeId,
+        activeProfileId,
+      );
+      await reloadSessions(activeProject, sess.id);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Create session failed', message: String(e) });
+    }
+  };
+
+  // ensureSession is called from ChatTab right before Send. If a project
+  // is open but no session is selected yet, create one quietly with a
+  // default title so the user's first message gets persisted to JSONL.
+  // Returns the resolved Session, or null when no project context exists
+  // (caller falls back to one-shot ChatStream).
+  const ensureSession = useCallback(async (): Promise<Session | null> => {
+    const cur = sessions.find((s) => s.id === activeSessionId);
+    if (cur) return cur;
+    if (!activeProject) return null;
+    try {
+      const sess = await CreateSession(
+        activeProject.ID,
+        'New chat',
+        'narrative-coauthor',
+        activeProfileId,
+      );
+      const list = await ListSessions(activeProject.ID);
+      setSessions(list);
+      setActiveSessionId(sess.id);
+      return sess;
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Create session failed', message: String(e) });
+      return null;
+    }
+  }, [sessions, activeSessionId, activeProject, activeProfileId]);
+
+  const onSelectSession = (id: string) => {
+    setActiveSessionId(id);
+  };
+
+  const onRenameSession = async (s: Session) => {
+    if (!activeProject) return;
+    const title = window.prompt('Rename session', s.title);
+    if (title == null) return;
+    try {
+      await RenameSession(activeProject.ID, s.id, title.trim() || s.title);
+      await reloadSessions(activeProject, s.id);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Rename failed', message: String(e) });
+    }
+  };
+
+  const onDeleteSessionAction = (s: Session) => {
+    if (!activeProject) return;
+    setConfirm({
+      title: 'Delete session',
+      message: (
+        <>
+          Delete session <strong>{s.title}</strong>?
+          <br />
+          This removes the JSONL file from disk.
+        </>
+      ),
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        try {
+          await DeleteSession(activeProject.ID, s.id);
+          await reloadSessions(activeProject);
+        } catch (e: any) {
+          notifications.show({ color: 'red', title: 'Delete failed', message: String(e) });
+        }
+      },
+    });
+  };
+
+  const onChangeSessionMode = async (modeId: string) => {
+    if (!activeProject || !activeSessionId) return;
+    try {
+      await UpdateSessionMode(activeProject.ID, activeSessionId, modeId);
+      await reloadSessions(activeProject, activeSessionId);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Mode update failed', message: String(e) });
+    }
+  };
+
+  // Backend-authoritative refresh after a chat round completes.
+  // Reloads BOTH the session-list (UpdatedAt + msg count) and the active
+  // session's full message history from disk. The hydrate effect in
+  // ChatTab then replaces local optimistic state with whatever is in
+  // JSONL — so if persistence ever drops a message we see it
+  // immediately, not on next session switch.
+  const refreshActiveSession = useCallback(async () => {
+    if (!activeProject || !activeSessionId) return;
+    try {
+      const [list, msgs] = await Promise.all([
+        ListSessions(activeProject.ID),
+        SessionMessages(activeProject.ID, activeSessionId),
+      ]);
+      setSessions(list);
+      setActiveSessionMessages(msgs || []);
+    } catch (e: any) {
+      notifications.show({
+        color: 'red',
+        title: 'Refresh session failed',
+        message: String(e),
+      });
+    }
+  }, [activeProject, activeSessionId]);
+
+  const onSelectFile = async (node: FileNode) => {
+    if (!activeProject || node.isDir) return;
+    try {
+      const fc = await ReadProjectFile(activeProject.ID, node.path);
+      setActiveFilePath(node.path);
+      setActiveFileContent(fc.content);
+      if (fc.truncated) {
+        notifications.show({
+          color: 'yellow',
+          title: 'File truncated',
+          message: `${node.path} exceeds 5 MB; showing the head.`,
+        });
+      }
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Read failed', message: String(e) });
+    }
   };
 
   return (
-    <AppShell header={{ height: 48 }} navbar={{ width: 380, breakpoint: 'sm' }} padding={0}>
-      <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
-          <Group gap="xs">
-            <Text fw={700}>llm-workbench</Text>
-            <Badge color="gray" variant="light">M0 spike</Badge>
-            <SegmentedControl
-              size="xs"
-              value={view}
-              onChange={(v) => switchView(v as 'edit' | 'preview')}
-              data={[
-                { label: 'Edit', value: 'edit' },
-                { label: 'Preview', value: 'preview' },
-              ]}
-            />
-            {view === 'preview' && previewStats && (
-              <Text size="xs" c="dimmed">
-                Go {previewStats.parseMs} ms · total {previewStats.totalMs} ms · html {(previewStats.htmlSize / 1024).toFixed(0)} KB
-              </Text>
-            )}
-          </Group>
-          <Group gap="xs">
-            <Badge color={status.healthy ? 'green' : status.running ? 'yellow' : 'gray'}>
-              {status.healthy ? 'healthy' : status.running ? `pid ${status.pid}` : 'stopped'}
-            </Badge>
-            <Text size="xs" c="dimmed">{status.baseUrl || cfg.baseUrl}</Text>
-            {status.running ? (
-              <Button size="xs" variant="light" color="red" leftSection={<IconPlayerStop size={14} />} onClick={onStop}>
-                Stop
-              </Button>
-            ) : (
-              <Button size="xs" variant="light" color="green" leftSection={<IconPlayerPlay size={14} />} onClick={onStart}>
-                Start
-              </Button>
-            )}
-            <ActionIcon variant="subtle" onClick={() => ServerStatus().then(setStatus)}>
-              <IconRefresh size={16} />
-            </ActionIcon>
-          </Group>
-        </Group>
-      </AppShell.Header>
+    <div
+      style={{
+        height: '100%',
+        background: V5.bg,
+        color: V5.text,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+      }}
+    >
+      <TitleBar
+        tab={tab}
+        onTabChange={setTab}
+        activeStatus={activeStatus}
+        activeMetrics={activeMetrics}
+        projects={projects}
+        activeProject={activeProject}
+        onOpenProject={onOpenProject}
+        onCreateProject={onCreateProjectAction}
+        onSelectProject={onSelectProject}
+        onDeleteProject={onDeleteProjectAction}
+      />
 
-      <AppShell.Navbar p="sm">
-        <Stack h="100%" gap="xs">
-          <Text size="sm" fw={600}>Prompt</Text>
-          <Textarea
-            placeholder="Type a message…"
-            autosize
-            minRows={4}
-            maxRows={10}
-            value={prompt}
-            onChange={(e) => setPrompt(e.currentTarget.value)}
-            disabled={streaming}
-          />
-          <Group gap="xs">
-            <Button
-              leftSection={streaming ? <Loader size={14} /> : <IconSend size={14} />}
-              onClick={send}
-              disabled={streaming || !status.healthy}
-              flex={1}
-            >
-              {streaming ? 'Streaming…' : 'Send'}
-            </Button>
-            {streaming && (
-              <ActionIcon color="red" variant="light" onClick={cancel} size="lg">
-                <IconX size={16} />
-              </ActionIcon>
-            )}
-          </Group>
-          {!status.healthy && (
-            <Text size="xs" c="dimmed">Server not healthy yet — wait for model load.</Text>
-          )}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <Sidebar
+          segment={segment}
+          onSegmentChange={setSegment}
+          profiles={profiles}
+          statusByProfile={statusByProfile}
+          metricsByProfile={metricsByProfile}
+          activeProfileId={activeProfileId}
+          onSelectProfile={setActiveProfileId}
+          onStart={onStart}
+          onStop={onStop}
+          onCreateProfile={onCreateProfile}
+          onEditProfile={onEditProfile}
+          fileTree={fileTree}
+          activeFilePath={activeFilePath}
+          onSelectFile={onSelectFile}
+          activeProjectName={activeProject?.Name}
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSelectSession={onSelectSession}
+          onCreateSession={onCreateSession}
+          onRenameSession={onRenameSession}
+          onDeleteSession={onDeleteSessionAction}
+        />
+        <MainPane
+          tab={tab}
+          profiles={profiles}
+          activeProfile={activeProfile}
+          activeProfileId={activeProfileId}
+          activeStatus={activeStatus}
+          statusByProfile={statusByProfile}
+          metricsByProfile={metricsByProfile}
+          logsByProfile={logsByProfile}
+          activeLogs={activeLogs}
+          modelLabel={modelLabel}
+          activeFilePath={activeFilePath}
+          activeFileContent={activeFileContent}
+          activeProject={activeProject}
+          activeSession={sessions.find((s) => s.id === activeSessionId) || null}
+          activeSessionMessages={activeSessionMessages}
+          sysMetrics={sysMetrics}
+          onSelectProfile={setActiveProfileId}
+          onStart={onStart}
+          onStop={onStop}
+          onRestart={onRestart}
+          onCreateProfile={onCreateProfile}
+          onEditProfile={onEditProfile}
+          onDeleteProfile={onDeleteProfile}
+          onChangeSessionMode={onChangeSessionMode}
+          onAfterChat={refreshActiveSession}
+          onCreateSession={onCreateSession}
+          ensureSession={ensureSession}
+        />
+      </div>
 
-          {docInfo && (
-            <>
-              <Divider label="Stress doc" labelPosition="left" />
-              <Code block style={{ fontSize: 11 }}>
-                {`path:    ${docInfo.path}
-bytes:   ${docInfo.bytes.toLocaleString()}
-read:    ${docInfo.loadedMs} ms (Go)
-render:  ${docInfo.renderMs} ms (CM6)`}
-              </Code>
-            </>
-          )}
+      <ProfileForm
+        opened={formOpen}
+        mode={formMode}
+        initial={formInitial}
+        profiles={profiles}
+        onClose={() => setFormOpen(false)}
+        onSaved={() => {
+          reloadProfiles();
+        }}
+      />
 
-          <Divider label="Config" labelPosition="left" />
-          <Code block style={{ fontSize: 11 }}>{JSON.stringify(cfg, null, 2)}</Code>
+      <NewSessionModal
+        opened={sessionModalOpen}
+        onClose={() => setSessionModalOpen(false)}
+        onCreate={onConfirmCreateSession}
+      />
 
-          <Divider label="llama-server log" labelPosition="left" />
-          <ScrollArea h={260} viewportRef={logScrollRef as any} type="auto">
-            <Code block style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>
-              {logs.join('\n')}
-            </Code>
-          </ScrollArea>
-        </Stack>
-      </AppShell.Navbar>
-
-      <AppShell.Main style={{ height: '100vh' }}>
-        <div style={{ height: 'calc(100vh - 48px)', position: 'relative' }}>
-          <div style={{ height: '100%', display: view === 'edit' ? 'block' : 'none' }}>
-            <MarkdownEditor
-              initialDoc={INITIAL_DOC}
-              onReady={(h) => {
-                editorRef.current = h;
-                if (!docLoadedRef.current) {
-                  docLoadedRef.current = true;
-                  loadDoc();
-                }
-              }}
-            />
-          </div>
-          <div style={{ height: '100%', display: view === 'preview' ? 'block' : 'none' }}>
-            <MarkdownPreview source={previewSource} onStats={setPreviewStats} />
-          </div>
-        </div>
-      </AppShell.Main>
-    </AppShell>
+      <ConfirmModal
+        opened={confirm != null}
+        onClose={() => setConfirm(null)}
+        onConfirm={async () => {
+          if (confirm) await confirm.onConfirm();
+        }}
+        title={confirm?.title || ''}
+        message={confirm?.message || ''}
+        confirmLabel={confirm?.confirmLabel}
+        variant="danger"
+      />
+    </div>
   );
 }

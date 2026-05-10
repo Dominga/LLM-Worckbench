@@ -6,30 +6,162 @@ export function ChatCancel(arg1) {
   return window['go']['main']['App']['ChatCancel'](arg1);
 }
 
-export function ChatStream(arg1, arg2) {
-  return window['go']['main']['App']['ChatStream'](arg1, arg2);
+export function ChatStream(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ChatStream'](arg1, arg2, arg3);
+}
+
+export function CreateProfile(arg1) {
+  return window['go']['main']['App']['CreateProfile'](arg1);
+}
+
+export function CreateProject(arg1, arg2) {
+  return window['go']['main']['App']['CreateProject'](arg1, arg2);
+}
+
+export function CreateSession(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CreateSession'](arg1, arg2, arg3, arg4);
+}
+
+export function CurrentProject() {
+  return window['go']['main']['App']['CurrentProject']();
+}
+
+export function DeleteProfile(arg1) {
+  return window['go']['main']['App']['DeleteProfile'](arg1);
+}
+
+export function DeleteProject(arg1) {
+  return window['go']['main']['App']['DeleteProject'](arg1);
+}
+
+export function DeleteSession(arg1, arg2) {
+  return window['go']['main']['App']['DeleteSession'](arg1, arg2);
 }
 
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
+export function GetGPUMetrics() {
+  return window['go']['main']['App']['GetGPUMetrics']();
+}
+
+export function GetProfile(arg1) {
+  return window['go']['main']['App']['GetProfile'](arg1);
+}
+
+export function GetSession(arg1, arg2) {
+  return window['go']['main']['App']['GetSession'](arg1, arg2);
+}
+
+export function GetSystemMetrics() {
+  return window['go']['main']['App']['GetSystemMetrics']();
+}
+
+export function ListFiles(arg1) {
+  return window['go']['main']['App']['ListFiles'](arg1);
+}
+
+export function ListModes() {
+  return window['go']['main']['App']['ListModes']();
+}
+
+export function ListProfiles() {
+  return window['go']['main']['App']['ListProfiles']();
+}
+
+export function ListProjects() {
+  return window['go']['main']['App']['ListProjects']();
+}
+
+export function ListSessions(arg1) {
+  return window['go']['main']['App']['ListSessions'](arg1);
+}
+
 export function LoadInitialDoc() {
   return window['go']['main']['App']['LoadInitialDoc']();
+}
+
+export function OpenProject(arg1) {
+  return window['go']['main']['App']['OpenProject'](arg1);
+}
+
+export function PickDirectory(arg1) {
+  return window['go']['main']['App']['PickDirectory'](arg1);
+}
+
+export function PickFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PickFile'](arg1, arg2, arg3);
+}
+
+export function ProfileLogs(arg1) {
+  return window['go']['main']['App']['ProfileLogs'](arg1);
+}
+
+export function ProfileMetrics(arg1) {
+  return window['go']['main']['App']['ProfileMetrics'](arg1);
+}
+
+export function ProfileStatus(arg1) {
+  return window['go']['main']['App']['ProfileStatus'](arg1);
+}
+
+export function ReadProjectFile(arg1, arg2) {
+  return window['go']['main']['App']['ReadProjectFile'](arg1, arg2);
+}
+
+export function RenameSession(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RenameSession'](arg1, arg2, arg3);
 }
 
 export function RenderMarkdown(arg1) {
   return window['go']['main']['App']['RenderMarkdown'](arg1);
 }
 
+export function RestartProfile(arg1) {
+  return window['go']['main']['App']['RestartProfile'](arg1);
+}
+
 export function ServerStatus() {
   return window['go']['main']['App']['ServerStatus']();
+}
+
+export function SessionChatStream(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4);
+}
+
+export function SessionMessages(arg1, arg2) {
+  return window['go']['main']['App']['SessionMessages'](arg1, arg2);
+}
+
+export function SetActiveProject(arg1) {
+  return window['go']['main']['App']['SetActiveProject'](arg1);
+}
+
+export function StartProfile(arg1) {
+  return window['go']['main']['App']['StartProfile'](arg1);
 }
 
 export function StartServer() {
   return window['go']['main']['App']['StartServer']();
 }
 
+export function StopProfile(arg1) {
+  return window['go']['main']['App']['StopProfile'](arg1);
+}
+
 export function StopServer() {
   return window['go']['main']['App']['StopServer']();
+}
+
+export function UpdateProfile(arg1, arg2) {
+  return window['go']['main']['App']['UpdateProfile'](arg1, arg2);
+}
+
+export function UpdateSessionMode(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateSessionMode'](arg1, arg2, arg3);
+}
+
+export function WriteProjectFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteProjectFile'](arg1, arg2, arg3);
 }
