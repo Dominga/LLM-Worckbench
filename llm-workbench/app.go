@@ -81,6 +81,27 @@ func (a *App) startup(ctx context.Context) {
 	RegisterBuiltinTools(a.tools)
 	a.modes = NewModeService(a.projects)
 
+	// Hook the agent loop into ChatService so sessions whose mode has
+	// a tool whitelist run through the multi-turn tool loop.
+	a.chat.AttachAgent(a.tools, a.modes, func(projectID string) *AgentContext {
+		var embedID string
+		// Auto-pick the first running embed profile for context.
+		if a.registry != nil && a.profiles != nil {
+			for _, p := range a.profiles.List() {
+				if p.Kind == KindEmbed && a.registry.Status(p.ID).Running {
+					embedID = p.ID
+					break
+				}
+			}
+		}
+		return &AgentContext{
+			ProjectID:      projectID,
+			EmbedProfileID: embedID,
+			Files:          a.files,
+			RAG:            a.rag,
+		}
+	})
+
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)
 	a.renderer = NewRenderer()

@@ -25,7 +25,15 @@ type ChatService struct {
 	registry *ServerRegistry
 	pm       *ProfileManager
 	sessions *SessionService
-	ctx      context.Context
+
+	// Optional agent-loop deps. When non-nil and the active mode has a
+	// non-empty ToolWhitelist, StartSessionStream routes through the
+	// tool-using loop instead of the plain SSE drain.
+	tools  *ToolRegistry
+	modes  *ModeService
+	agentX func(projectID string) *AgentContext // builds AgentContext on demand
+
+	ctx context.Context
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
@@ -38,6 +46,15 @@ func NewChatService(registry *ServerRegistry, pm *ProfileManager, sessions *Sess
 		sessions: sessions,
 		cancels:  make(map[string]context.CancelFunc),
 	}
+}
+
+// AttachAgent wires the optional agent-loop dependencies. Safe to call
+// after NewChatService — keeps the constructor signature stable while
+// M3 services come online.
+func (c *ChatService) AttachAgent(tools *ToolRegistry, modes *ModeService, agentX func(projectID string) *AgentContext) {
+	c.tools = tools
+	c.modes = modes
+	c.agentX = agentX
 }
 
 func (c *ChatService) Attach(ctx context.Context) {
@@ -129,20 +146,60 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 	c.cancels[streamID] = cancel
 	c.mu.Unlock()
 
+	// Decide path: if the session's mode has tools enabled and the
+	// agent-loop deps are wired, run the tool-using loop. Otherwise
+	// fall back to the plain SSE stream.
+	useAgent := false
+	var resolved Mode
+	if c.modes != nil && c.tools != nil && c.agentX != nil {
+		resolved = c.modes.Resolve(projectID, sess.ModeID)
+		if len(resolved.ToolWhitelist) != 0 {
+			// nil = "all tools" (also a tool-using mode); empty []
+			// explicitly means chat-only.
+			useAgent = true
+		} else if resolved.ToolWhitelist == nil {
+			// Belt-and-braces: a project-local override that drops the
+			// whitelist field defaults to "all tools" via normalise()'s
+			// rules — treat as agent.
+			useAgent = true
+		}
+	}
+
 	go func() {
-		full, err := c.runStream(streamCtx, streamID, baseURL, msgs, temperature)
-		if err == nil && full != "" {
-			persistErr := c.sessions.AppendMessage(projectID, sessionID, SessionMessage{
+		var (
+			fullContent string
+			toolCalls   []ToolCallRecord
+			err         error
+		)
+		if useAgent {
+			ac := c.agentX(projectID)
+			ac.ProjectID = projectID
+			ac.Mode = resolved
+			res, e := c.streamWithTools(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+			fullContent = res.FinalContent
+			toolCalls = res.ToolCalls
+			err = e
+		} else {
+			fullContent, err = c.runStream(streamCtx, streamID, baseURL, msgs, temperature)
+		}
+		if err == nil && fullContent != "" {
+			msg := SessionMessage{
 				Role:      "assistant",
-				Content:   full,
+				Content:   fullContent,
 				ProfileID: sess.ProfileID,
 				Timestamp: time.Now().UTC(),
-			})
+			}
+			if len(toolCalls) > 0 {
+				if encoded, mErr := json.Marshal(toolCalls); mErr == nil {
+					msg.ToolCalls = encoded
+				}
+			}
+			persistErr := c.sessions.AppendMessage(projectID, sessionID, msg)
 			if persistErr != nil {
 				wruntime.LogErrorf(c.ctx, "persist assistant msg: %v", persistErr)
 			}
 		}
-		c.finalize(streamID, full, err)
+		c.finalize(streamID, fullContent, err)
 	}()
 	return StreamHandle{StreamID: streamID}, nil
 }

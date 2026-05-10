@@ -40,6 +40,10 @@ type SessionMessage struct {
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"ts"`
 	ProfileID string    `json:"profileId,omitempty"`
+	// ToolCalls is the JSON-encoded array of ToolCallRecord captured
+	// when an assistant turn ran tools (M3 agent loop). Empty for
+	// plain chat turns.
+	ToolCalls json.RawMessage `json:"toolCalls,omitempty"`
 }
 
 // sessionHeader is line 1 of every session file.

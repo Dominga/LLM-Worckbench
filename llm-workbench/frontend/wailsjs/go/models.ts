@@ -535,6 +535,7 @@ export namespace main {
 	    // Go type: time
 	    ts: any;
 	    profileId?: string;
+	    toolCalls?: number[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMessage(source);
@@ -546,6 +547,7 @@ export namespace main {
 	        this.content = source["content"];
 	        this.ts = this.convertValues(source["ts"], null);
 	        this.profileId = source["profileId"];
+	        this.toolCalls = source["toolCalls"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

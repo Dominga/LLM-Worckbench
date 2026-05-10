@@ -108,9 +108,24 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       whitelist semantics, normalise defaults, project-local override + bad-file
       skipping, fallback resolution. Mode picker still routes through
       `UpdateSessionMode` — actual behaviour wiring lands in PR17/18.
-- [ ] **PR17** — Native tool-calling path. ChatService gains `streamWithTools` that
-      sends `tools=[]` to llama-server and dispatches tool_call deltas. Capability
-      probe on first chat to a profile, cached in profile state.
+- [x] **PR17** — Native tool-calling agent loop. `agent_loop.go` adds
+      `ChatService.streamWithTools` which builds the OpenAI `tools=[]` array from
+      the mode's whitelist, runs an SSE stream, accumulates fragmented
+      `delta.tool_calls[]` (id+name on first chunk, arguments stream as a string),
+      dispatches each call through `ToolRegistry.Invoke`, appends the assistant
+      tool_call turn + the `tool` result turn to the convo, and re-enters the
+      stream. Bounded by `maxAgentIterations=8`. System prompt from the mode is
+      injected as the first system message. Per-call frontend events:
+      `agent:tool:request:<streamId>` + `agent:tool:result:<streamId>`. Tool
+      results persisted as `SessionMessage.ToolCalls` (raw JSON). `ChatService`
+      auto-routes through the agent loop when the resolved mode has a non-empty
+      tool whitelist; chat-only mode keeps the plain SSE drain. Capability probe
+      deferred — sending `tools=[]` to a non-tools model results in plain text
+      reply (no tool_calls in stream → loop exits with content), which is a
+      graceful degradation. Tests: SSE fragment reassembly, plain-content path,
+      whitelist-driven schema build, mock end-to-end loop (stub server returns
+      tool_call → final answer; verifies request bodies don't carry tool_call_id
+      on iter 1, do on iter 2).
 - [ ] **PR18** — ReAct fallback. System-prompt template enumerates tools as a JSON
       schema block. Stream accumulator intercepts `Action:` / `Args:` lines, runs
       the tool, injects result as a synthetic assistant turn (`Observation: …`),
