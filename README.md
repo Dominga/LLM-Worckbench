@@ -47,7 +47,9 @@ Two build tags are required on every `wails dev` / `wails build`:
 | `webkit2_41` | Linux only. Needed on distros shipping `libwebkit2gtk-4.1` (Debian 13, Ubuntu 24.04+, Fedora 40+). Harmless on Windows but the Wails CLI ignores it there. |
 | `sqlite_fts5` | Enables the FTS5 module in mattn/go-sqlite3, used by the RAG index for BM25 retrieval. Required on every platform. |
 
-Always pass them via `-tags "webkit2_41 sqlite_fts5"` (or `-tags sqlite_fts5` on Windows).
+Always pass them via `-tags "webkit2_41,sqlite_fts5"` (Windows: `-tags sqlite_fts5`).
+
+> ⚠️ Wails CLI takes the `-tags` value as a **comma-separated** list (not space-separated like plain `go build`). If you pass `-tags "tag1 tag2"` Wails will forward only the first tag and the resulting binary will fail at runtime with `no such module: fts5` when the RAG index is opened. Use `,` between tags.
 
 ### Linux (Debian 13 / Ubuntu 24.04+ / Fedora 40+)
 
@@ -73,10 +75,10 @@ cd llm-workbench
 cp .env.example .env        # then edit paths to your llama-server + model (legacy seed, M1+ uses profiles.toml)
 
 # Dev (hot reload, devtools at http://localhost:34115)
-PATH=$PATH:$HOME/go/bin wails dev -tags "webkit2_41 sqlite_fts5"
+PATH=$PATH:$HOME/go/bin wails dev -tags "webkit2_41,sqlite_fts5"
 
 # Production build → build/bin/llm-workbench
-PATH=$PATH:$HOME/go/bin wails build -tags "webkit2_41 sqlite_fts5"
+PATH=$PATH:$HOME/go/bin wails build -tags "webkit2_41,sqlite_fts5"
 ```
 
 ### Windows 10 / 11

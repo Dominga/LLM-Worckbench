@@ -95,6 +95,12 @@ func readDir(root, rel string) ([]FileNode, error) {
 		if isHidden(e.Name()) {
 			continue
 		}
+		// project.toml is app metadata, not user content. Hide it from the
+		// tree so users don't accidentally edit it; rag/profile config UI
+		// is the supported way to change those fields.
+		if rel == "" && e.Name() == "project.toml" {
+			continue
+		}
 		full := filepath.Join(dir, e.Name())
 		info, err := e.Info()
 		if err != nil {

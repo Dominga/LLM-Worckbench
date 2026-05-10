@@ -19,14 +19,18 @@ All run from `llm-workbench/`. Build tags:
 - `webkit2_41` — Linux Debian 13 needs this (system has libwebkit2gtk-4.1, not 4.0).
 - `sqlite_fts5` — enables the FTS5 module in mattn/go-sqlite3, required by the M2 RAG index.
 
-Always pass both via `-tags "webkit2_41 sqlite_fts5"`. A plain `go build ./...` (used for compile checks) does NOT need `webkit2_41` (no webview embed) but DOES need `sqlite_fts5` once index code is exercised by a test or smoke run.
+Always pass both via `-tags "webkit2_41,sqlite_fts5"`.
+
+**Important:** Wails CLI parses `-tags` as **comma-separated**, NOT space-separated like `go build`. Passing `-tags "webkit2_41 sqlite_fts5"` (with a space) makes Wails forward only the first tag — the resulting binary will error at runtime with `no such module: fts5` when the RAG index is first opened. Use `,` between tags for `wails dev`/`wails build`.
+
+A plain `go build ./...` (used for compile checks) does NOT need `webkit2_41` (no webview embed) but DOES need `sqlite_fts5` once index code is exercised by a test or smoke run. Plain `go build` accepts space-separated tags as usual.
 
 ```bash
 # Dev (hot reload, devtools at :34115)
-PATH=$PATH:$HOME/go/bin wails dev -tags "webkit2_41 sqlite_fts5"
+PATH=$PATH:$HOME/go/bin wails dev -tags "webkit2_41,sqlite_fts5"
 
 # Production build → build/bin/llm-workbench
-PATH=$PATH:$HOME/go/bin wails build -tags "webkit2_41 sqlite_fts5"
+PATH=$PATH:$HOME/go/bin wails build -tags "webkit2_41,sqlite_fts5"
 
 # Regenerate JS bindings after changing exported App methods
 PATH=$PATH:$HOME/go/bin wails generate module

@@ -64,6 +64,82 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 ## Tech debt / nice-to-have
 
+### TD8 — /search hit click should scroll to the chunk
+
+Today clicking a hit opens the file via `onOpenFilePath` but lands at the top — user
+has to manually scroll to find the matched chunk. Hit carries `startByte`/`endByte`
+already; thread them down to the editor.
+
+**Fix:**
+- Extend `onOpenFilePath` (or add `onOpenFileAt(path, startByte, endByte)`) to also
+  carry byte offsets.
+- In `Editor` (CodeMirror 6), convert byte offset → character position (UTF-8 walk),
+  dispatch `EditorView.scrollIntoView(EditorSelection.range(start, end))` on next
+  tick after content load. Optionally add a fading highlight (`Decoration.mark`) for
+  ~2 seconds so the user sees what matched.
+- Same for Preview pane — anchor scroll to the corresponding offset in the rendered
+  HTML (more involved; can be deferred).
+
+**Files:** `frontend/src/components/Editor.tsx`, `frontend/src/tabs/ChatTab.tsx`
+(hit click handler), `frontend/src/App.tsx` (`onOpenFilePath` signature).
+
+### TD6 — Resizable chat ↔ file panes + collapsible chat side
+
+Right now the chat pane is fixed width and only the file pane has a collapse rail.
+Two improvements:
+
+1. **Drag-resize divider** between chat (left) and file (right) panes. Persist width
+   per-project in localStorage so layouts survive restarts.
+2. **Collapse chat side** — mirror the file-pane behaviour (`activeFilePath && !panelOpen`
+   shows a thin rail with restore button). Lets the user focus on a file alone.
+
+**Files:** `frontend/src/tabs/ChatTab.tsx` (split layout, divider, collapse state), maybe
+extract `SplitPane` helper.
+
+### TD7 — Inline file autocomplete when chat is hidden (future)
+
+Once TD6 lands and the chat side can be hidden, give the file editor a Copilot-style
+inline completion bound to the active chat profile (`/v1/completions` with the FIM
+prompt format the model supports). Should be unobtrusive — debounced, dismissable
+with Esc, accepted with Tab. **Priority: low / much later** — wait for M3 agent loop
+to settle the prompt-routing pipeline first.
+
+### TD5 — Duplicate window controls (native + custom)
+
+App shows two sets of window controls: native OS title-bar (min/max/close) plus our custom
+TitleBar buttons in the V5 shell. Need to hide the native chrome.
+
+**Fix:** set `Frameless: true` in `wails.Run` options (`main.go`). On Linux+webkit2_41 this
+removes the GTK header bar entirely — our custom TitleBar already implements drag-to-move
+(via `WindowSetPosition` / `--wails-draggable` CSS) and min/max/close (`WindowMinimise`,
+`WindowMaximise`, `Hide`). Verify drag region still works on Linux + Windows after the
+toggle; webview drag has historically been finicky on GTK.
+
+**Files:** `main.go` (Wails options), `frontend/src/shell/TitleBar.tsx` (ensure draggable
+region attribute set on the bar — Wails uses `style="--wails-draggable: drag"` on the
+element that should act as the OS-level grab handle).
+
+### TD3 — Linked embed sidecar should start BEFORE chat (not after)
+
+`supervisor.go` `Start(chat)` currently kicks off the linked embed profile in a goroutine
+**after** the chat process spawns. With `--fit` (ik_llama.cpp), the chat allocator reads
+`cudaMemGetInfo` at startup and greedily fills the GPU — by the time the embed sidecar
+tries to load, there's no room left and BGE-M3 OOMs on warmup.
+
+**Fix:** when `LaunchEmbedding=true && EmbedProfileID != ""`, start the embed profile FIRST,
+wait for `/health`, then start the chat profile. Chat's `--fit` then sees real free VRAM
+(minus embed) and distributes layers correctly. Failures of the embed start should still
+not block chat (downgrade to warning + skip linked sidecar).
+
+**Files:** `supervisor.go` `ServerRegistry.Start`.
+
+### TD4 — Configurable startup order for linked profiles (future)
+
+Once TD3 lands with hard-coded "embed first", expose the order as a profile field
+(or a separate `[startup]` block in profiles.toml) so users can mix-and-match arbitrary
+sidecars (rerank, multimodal projector, future tool servers) and choose the order.
+**Priority: low / much later.**
+
 ### TD2 — Auto-reindex on file save
 
 Currently Reindex is manual via the `RagPanel` button. Hook the project polling tick

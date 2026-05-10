@@ -9,12 +9,12 @@ import {
   Switch,
   Button,
   ActionIcon,
-  TagsInput,
+  Textarea,
   Divider,
   Text,
   Box,
 } from '@mantine/core';
-import { IconFolder, IconFile, IconCopy, IconClipboard } from '@tabler/icons-react';
+import { IconFolder, IconFile } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
   CreateProfile,
@@ -51,7 +51,7 @@ type FormState = {
   Port: number;
   CtxSize: number;
   NGL: number;
-  ExtraArgs: string[];
+  ExtraArgsRaw: string;
   Autostart: boolean;
   HealthTimeoutSec: number;
   SamplingTemperature: number;
@@ -74,7 +74,7 @@ function emptyForm(): FormState {
     Port: 18080,
     CtxSize: 0,
     NGL: 0,
-    ExtraArgs: [],
+    ExtraArgsRaw: '',
     Autostart: false,
     HealthTimeoutSec: 120,
     SamplingTemperature: 0.7,
@@ -98,7 +98,7 @@ function fromProfile(p: Profile): FormState {
     Port: p.Port || 18080,
     CtxSize: p.CtxSize || 0,
     NGL: p.NGL || 0,
-    ExtraArgs: p.ExtraArgs || [],
+    ExtraArgsRaw: (p.ExtraArgs || []).join(' '),
     Autostart: p.Autostart || false,
     HealthTimeoutSec: p.HealthTimeoutSec || 120,
     SamplingTemperature: p.Sampling?.Temperature ?? 0.7,
@@ -123,7 +123,7 @@ function toProfile(f: FormState): Profile {
     Port: f.Port,
     CtxSize: f.CtxSize,
     NGL: f.NGL,
-    ExtraArgs: f.ExtraArgs,
+    ExtraArgs: f.ExtraArgsRaw.split(/\s+/).map((s) => s.trim()).filter(Boolean),
     Autostart: f.Autostart,
     HealthTimeoutSec: f.HealthTimeoutSec,
     Sampling: new main.Sampling({
@@ -353,61 +353,17 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
           />
         </Group>
 
-        <Box>
-          <TagsInput
-            label={
-              <Group gap={6} justify="space-between" w="100%">
-                <Text size="sm" fw={500}>Extra args</Text>
-                <Group gap={4}>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    title="Copy as space-separated string"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(form.ExtraArgs.join(' '));
-                        notifications.show({
-                          color: 'teal',
-                          title: 'Copied',
-                          message: `${form.ExtraArgs.length} arg(s) on clipboard.`,
-                        });
-                      } catch (e: any) {
-                        notifications.show({ color: 'red', title: 'Copy failed', message: String(e) });
-                      }
-                    }}
-                  >
-                    <IconCopy size={14} />
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    title="Paste from clipboard (whitespace-split)"
-                    onClick={async () => {
-                      try {
-                        const text = await navigator.clipboard.readText();
-                        const parts = text.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-                        update('ExtraArgs', parts);
-                        notifications.show({
-                          color: 'teal',
-                          title: 'Pasted',
-                          message: `${parts.length} arg(s) imported.`,
-                        });
-                      } catch (e: any) {
-                        notifications.show({ color: 'red', title: 'Paste failed', message: String(e) });
-                      }
-                    }}
-                  >
-                    <IconClipboard size={14} />
-                  </ActionIcon>
-                </Group>
-              </Group>
-            }
-            description="Space- or comma-separated CLI flags appended after the standard ones (e.g. --fit, --flash-attn)."
-            value={form.ExtraArgs}
-            onChange={(v) => update('ExtraArgs', v)}
-            splitChars={[' ', ',']}
-          />
-        </Box>
+        <Textarea
+          label="Extra args"
+          description="Raw CLI tail appended after the standard flags. Whitespace-separated; quoting not supported (paste exactly as you'd type in the terminal)."
+          value={form.ExtraArgsRaw}
+          onChange={(e) => update('ExtraArgsRaw', e.currentTarget.value)}
+          autosize
+          minRows={2}
+          maxRows={6}
+          placeholder="--fit -t 16 -b 2048 --cache-type-k q8_0"
+          styles={{ input: { fontFamily: 'ui-monospace, monospace', fontSize: 12 } }}
+        />
 
         <Group grow>
           <NumberInput

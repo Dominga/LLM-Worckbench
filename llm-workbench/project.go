@@ -59,6 +59,7 @@ func DefaultIndexingConfig() IndexingConfig {
 			"vendor/**",
 			"build/**",
 			"dist/**",
+			"project.toml",
 		},
 		ChunkChars:   2048,
 		OverlapChars: 256,
