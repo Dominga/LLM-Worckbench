@@ -81,8 +81,13 @@ func (a *App) startup(ctx context.Context) {
 	RegisterBuiltinTools(a.tools)
 	a.modes = NewModeService(a.projects)
 
+	a.chat = NewChatService(a.registry, pm, a.sessions)
+	a.chat.Attach(ctx)
+	a.renderer = NewRenderer()
+
 	// Hook the agent loop into ChatService so sessions whose mode has
-	// a tool whitelist run through the multi-turn tool loop.
+	// a tool whitelist run through the multi-turn tool loop. Must
+	// happen after NewChatService so the receiver isn't nil.
 	a.chat.AttachAgent(a.tools, a.modes, func(projectID string) *AgentContext {
 		var embedID string
 		// Auto-pick the first running embed profile for context.
@@ -101,10 +106,6 @@ func (a *App) startup(ctx context.Context) {
 			RAG:            a.rag,
 		}
 	})
-
-	a.chat = NewChatService(a.registry, pm, a.sessions)
-	a.chat.Attach(ctx)
-	a.renderer = NewRenderer()
 
 	a.startSysMetricsTicker(ctx)
 
