@@ -526,6 +526,24 @@ export namespace main {
 	    }
 	}
 	
+	export class ScriptResult {
+	    output: string[];
+	    return?: any;
+	    error?: string;
+	    durationMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScriptResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.output = source["output"];
+	        this.return = source["return"];
+	        this.error = source["error"];
+	        this.durationMs = source["durationMs"];
+	    }
+	}
 	export class Session {
 	    id: string;
 	    projectId: string;

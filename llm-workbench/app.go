@@ -27,6 +27,7 @@ type App struct {
 	modes     *ModeService
 	approvals *ApprovalManager
 	snapshots *SnapshotService
+	scripting *ScriptingService
 }
 
 func NewApp() *App {
@@ -88,6 +89,7 @@ func (a *App) startup(ctx context.Context) {
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)
 	a.renderer = NewRenderer()
+	a.scripting = NewScriptingService(a.projects, a.files, a.chat, a.rag, a.profiles, a.indexes)
 
 	// Hook the agent loop into ChatService so sessions whose mode has
 	// a tool whitelist run through the multi-turn tool loop. Must
@@ -163,6 +165,18 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
 	}
 	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
+}
+
+// RunScript executes a Prompt-Lab script under the project's
+// scripting sandbox. Synchronous: returns the full ScriptResult
+// (output lines, optional return value, error, duration). Cancel by
+// not blocking the UI — goja runs in-process and is fast for the
+// short scripts the Lab is designed for.
+func (a *App) RunScript(projectID, source string) ScriptResult {
+	if a.scripting == nil {
+		return ScriptResult{Error: "scripting service unavailable"}
+	}
+	return a.scripting.Run(a.ctx, projectID, source)
 }
 
 // RevertLastAgentSnapshot rolls the project tree back to the most

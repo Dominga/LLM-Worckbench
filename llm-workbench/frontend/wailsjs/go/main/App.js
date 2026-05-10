@@ -146,6 +146,10 @@ export function RevertLastAgentSnapshot(arg1, arg2) {
   return window['go']['main']['App']['RevertLastAgentSnapshot'](arg1, arg2);
 }
 
+export function RunScript(arg1, arg2) {
+  return window['go']['main']['App']['RunScript'](arg1, arg2);
+}
+
 export function SearchProject(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['SearchProject'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

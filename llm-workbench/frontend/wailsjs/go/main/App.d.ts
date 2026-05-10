@@ -74,6 +74,8 @@ export function RestartProfile(arg1:string):Promise<void>;
 
 export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.AgentSnapshot>;
 
+export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
+
 export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<Array<main.ChunkHit>>;
 
 export function ServerStatus():Promise<main.Status>;

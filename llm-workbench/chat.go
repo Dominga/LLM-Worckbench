@@ -258,6 +258,25 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 	return StreamHandle{StreamID: streamID}, nil
 }
 
+// complete is the one-shot non-streaming wrapper used by the M4
+// scripting layer (`app.chat.complete`). Returns the full assistant
+// content as one string. Reuses the SSE drain but accumulates without
+// emitting deltas to the frontend, so the JS caller blocks until the
+// reply lands.
+func (c *ChatService) complete(profileID string, messages []ChatMessage, temperature float64) (string, error) {
+	baseURL, err := c.resolveBaseURL(profileID)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	streamID := uuid.NewString() // unused over the wire; just a unique marker
+	c.mu.Lock()
+	c.cancels[streamID] = cancel
+	c.mu.Unlock()
+	return c.runStream(ctx, streamID, baseURL, messages, temperature)
+}
+
 func (c *ChatService) CancelStream(streamID string) {
 	c.mu.Lock()
 	cancel, ok := c.cancels[streamID]

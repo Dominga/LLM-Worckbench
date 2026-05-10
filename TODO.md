@@ -62,6 +62,42 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 **Files:** `supervisor.go`, `frontend/src/App.tsx`, `frontend/src/tabs/ServersTab.tsx`.
 
+## Milestone 4 — Scripting + Prompt Lab
+
+DESIGN.md §5.5 + §9 M4. Decisions:
+
+- **JS runtime:** goja (pure-Go ES5.1+).
+- **Initial scope:** runtime + global API, Prompt Lab UI, script storage. Workflows
+  and external Python tools deferred to TDs.
+- **Permissions:** full project access — same surface as M3 tools.
+
+### PRs
+
+- [x] **PR22** — `scripting.go` with `ScriptingService.Run(ctx, projectID, source)`.
+      goja runtime per call; project-scoped `app` global wired with:
+      `app.log(...)`, `app.fs.{read,write,list}`, `app.rag.search(query, opts)`,
+      `app.chat.complete({messages, profileId?, temperature?})`, and
+      `app.project.{id,name,path}`. Output lines collected for the UI; final
+      expression value exported as `Return`. Cooperative ctx cancellation via
+      `runtime.Interrupt`. `ChatService.complete` non-streaming helper added so
+      scripts can call the LLM synchronously. App binding `RunScript(projectID,
+      source) ScriptResult`. Tests cover log capture, fs read/write/list, RAG
+      sparse search, error surfacing, return-value export, project global,
+      path-traversal containment.
+- [ ] **PR23** — Script storage at `<project>/.llm-workshop/scripts/*.js`.
+      `ListScripts(projectID)`, `LoadScript(projectID, name)`,
+      `SaveScript(projectID, name, source)`. Atomic write via tmp+rename.
+- [ ] **PR24** — Prompt Lab tab (currently disabled placeholder). CodeMirror JS
+      editor + Run button + output panel. Wires `RunScript` and renders
+      `ScriptResult.output[]` + `Return` JSON.
+
+### Deferred to TDs
+
+- TD12 — JSDoc `@param` → auto-generated parameter form on the Lab tab.
+- TD13 — Workflow TOML triggers + steps (`[workflow.foo]`).
+- TD14 — External Python sidecar tools (`[external_tool.*]`).
+- TD15 — Script API versioning (`requireApi("1.0")`).
+
 ## Milestone 3 — Agent loop
 
 DESIGN.md §5.3 + §9 M3. Decisions for M3:
@@ -195,6 +231,34 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
   cancels stream; we'll need to also cancel an in-flight tool handler).
 
 ## Tech debt / nice-to-have
+
+### TD12 — JSDoc-driven Lab parameter form
+
+Auto-generate a small input form on the Prompt Lab tab from `@param` JSDoc
+annotations in the script source. Feed the values into a `params` global the
+script can read. Lets users author parameterised utility scripts without
+hand-coding a UI per script.
+
+### TD13 — Workflow TOML
+
+`<project>/.llm-workshop/workflows/*.toml` definitions: `trigger` (manual /
+file-change / cron) → `steps` (`llm.chat`, `script`, `subprocess`) → output
+paths. WorkflowEngine + UI to browse / run / schedule. Bigger block —
+materialise once PR22–PR24 settle.
+
+### TD14 — External Python sidecar tools
+
+`[external_tool.foo]` in `~/.config/llm-workbench/external_tools.toml`:
+interpreter + script + contract (argv / stdin-json / http). Surfaces in the
+agent loop as a tool named `foo` and inside scripts as `app.tools.run("foo",
+…)`. Useful for heavy NLP utilities (xtts, whisper) outside Go's pure-runtime
+scope.
+
+### TD15 — Script API versioning
+
+Per-script `requireApi("1.0")` directive so newer global-API surface can ship
+without breaking older scripts. Service tracks the active set of method
+signatures keyed by major.minor.
 
 ### TD11 — Send button stuck disabled after agent tool call ✓ partial fix
 
