@@ -33,7 +33,20 @@ import {
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 type ChatRole = 'user' | 'assistant';
-type ChatMessage = { id: string; role: ChatRole; content: string };
+type ToolCallChip = {
+  name: string;
+  args?: string;
+  // result is left as-is (any JSON shape) for hover tooltips; chip
+  // itself only shows a tiny summary derived from the args.
+  result?: any;
+  error?: string;
+};
+type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  toolCalls?: ToolCallChip[];
+};
 
 export type ChatTabProps = {
   activeProfileId: string;
@@ -103,11 +116,34 @@ export function ChatTab({
   useEffect(() => {
     if (streaming) return;
     setMessages(
-      activeSessionMessages.map((m, i) => ({
-        id: `s-${i}`,
-        role: (m.role as ChatRole) || 'assistant',
-        content: m.content,
-      })),
+      activeSessionMessages.map((m, i) => {
+        let toolCalls: ToolCallChip[] | undefined;
+        const raw = (m as any).toolCalls;
+        if (raw) {
+          try {
+            // SessionMessage.toolCalls is json.RawMessage on the
+            // backend; Wails surfaces it as a string of bytes or an
+            // already-parsed array depending on the encoder version.
+            const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (Array.isArray(parsed)) {
+              toolCalls = parsed.map((c: any) => ({
+                name: c.name ?? c.Name,
+                args: typeof c.args === 'string' ? c.args : JSON.stringify(c.args ?? c.Args ?? {}),
+                result: c.result ?? c.Result,
+                error: c.error ?? c.Error,
+              }));
+            }
+          } catch {
+            /* swallow — chip section just won't render for this msg */
+          }
+        }
+        return {
+          id: `s-${i}`,
+          role: (m.role as ChatRole) || 'assistant',
+          content: m.content,
+          toolCalls,
+        };
+      }),
     );
   }, [activeSession?.id, activeSessionMessages, streaming]);
 
@@ -296,6 +332,8 @@ export function ChatTab({
       const deltaEvent = `chat:delta:${id}`;
       const doneEvent = `chat:done:${id}`;
       const errEvent = `chat:error:${id}`;
+      const toolReqEvent = `agent:tool:request:${id}`;
+      const toolResEvent = `agent:tool:result:${id}`;
 
       // We MUST await onAfterChat (which reloads activeSessionMessages
       // from JSONL) BEFORE flipping streaming=false. Otherwise the
@@ -308,6 +346,8 @@ export function ChatTab({
         EventsOff(deltaEvent);
         EventsOff(doneEvent);
         EventsOff(errEvent);
+        EventsOff(toolReqEvent);
+        EventsOff(toolResEvent);
         streamIdRef.current = null;
         if (refresh) {
           try {
@@ -336,6 +376,42 @@ export function ChatTab({
       EventsOn(errEvent, (msg: string) => {
         notifications.show({ color: 'red', title: 'Stream error', message: msg });
         cleanup(false);
+      });
+      // Append a placeholder chip when the model requests a tool, then
+      // attach the result/error to it when it finishes. Streaming UX:
+      // user sees "🔧 read_file…" land before the tool call resolves,
+      // updates with success/error a moment later.
+      EventsOn(toolReqEvent, (req: { name: string; args?: string }) => {
+        setMessages((prev) => {
+          const out = prev.slice();
+          const lastIdx = out.length - 1;
+          const last = out[lastIdx];
+          if (!last || last.role !== 'assistant') return prev;
+          const next = (last.toolCalls ?? []).concat({
+            name: req.name,
+            args: req.args,
+          });
+          out[lastIdx] = { ...last, toolCalls: next };
+          return out;
+        });
+      });
+      EventsOn(toolResEvent, (res: { name: string; result?: any; error?: string }) => {
+        setMessages((prev) => {
+          const out = prev.slice();
+          const lastIdx = out.length - 1;
+          const last = out[lastIdx];
+          if (!last || last.role !== 'assistant' || !last.toolCalls) return prev;
+          // Patch the most recent unresolved chip for this tool name.
+          const calls = last.toolCalls.slice();
+          for (let i = calls.length - 1; i >= 0; i--) {
+            if (calls[i].name === res.name && calls[i].result == null && !calls[i].error) {
+              calls[i] = { ...calls[i], result: res.result, error: res.error };
+              break;
+            }
+          }
+          out[lastIdx] = { ...last, toolCalls: calls };
+          return out;
+        });
       });
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Chat failed', message: String(e) });
@@ -501,7 +577,13 @@ export function ChatTab({
                 )}
               </div>
             )}
-            {messages.map((m) => (m.role === 'user' ? <UserBubble key={m.id} m={m} /> : <AssistantBubble key={m.id} m={m} />))}
+            {messages.map((m) =>
+              m.role === 'user' ? (
+                <UserBubble key={m.id} m={m} />
+              ) : (
+                <AssistantBubble key={m.id} m={m} onOpenFilePath={onOpenFilePath} />
+              ),
+            )}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -1075,7 +1157,13 @@ function UserBubble({ m }: { m: ChatMessage }) {
   );
 }
 
-function AssistantBubble({ m }: { m: ChatMessage }) {
+function AssistantBubble({
+  m,
+  onOpenFilePath,
+}: {
+  m: ChatMessage;
+  onOpenFilePath: (path: string) => void;
+}) {
   return (
     <div style={{ display: 'flex', gap: 10 }}>
       <div
@@ -1104,9 +1192,112 @@ function AssistantBubble({ m }: { m: ChatMessage }) {
         }}
       >
         {m.content || <span style={{ color: V5.textDim, fontStyle: 'italic' }}>…</span>}
+        {m.toolCalls && m.toolCalls.length > 0 && (
+          <ToolCallChips calls={m.toolCalls} onOpenFilePath={onOpenFilePath} />
+        )}
       </div>
     </div>
   );
+}
+
+function ToolCallChips({
+  calls,
+  onOpenFilePath,
+}: {
+  calls: ToolCallChip[];
+  onOpenFilePath: (path: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+      {calls.map((c, i) => {
+        const summary = chipSummary(c);
+        const path = pathFromArgs(c);
+        const isErr = !!c.error;
+        const isPending = c.result == null && !c.error;
+        const clickable = !!path;
+        const color = isErr ? V5.danger : isPending ? V5.textDim : V5.textMuted;
+        const bg = isErr ? `${V5.danger}14` : V5.surface;
+        const border = isErr ? `${V5.danger}55` : V5.borderSoft;
+        return (
+          <button
+            key={i}
+            onClick={() => path && onOpenFilePath(path)}
+            disabled={!clickable}
+            title={c.error ? c.error : isPending ? 'running…' : ''}
+            style={{
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: 10.5,
+              padding: '2px 7px',
+              background: bg,
+              border: `1px solid ${border}`,
+              color,
+              borderRadius: 999,
+              cursor: clickable ? 'pointer' : 'default',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontWeight: 500,
+            }}
+          >
+            <span>{toolIcon(c.name)}</span>
+            <span style={{ color: V5.text }}>{c.name}</span>
+            {summary && (
+              <span style={{ color: V5.textDim, fontWeight: 400 }}>· {summary}</span>
+            )}
+            {isPending && <span style={{ color: V5.textDim }}>…</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function toolIcon(name: string): string {
+  switch (name) {
+    case 'read_file':
+      return '📄';
+    case 'list_files':
+      return '📂';
+    case 'search_semantic':
+      return '🔍';
+    case 'edit_file':
+      return '✏️';
+    default:
+      return '🔧';
+  }
+}
+
+function chipSummary(c: ToolCallChip): string {
+  let parsed: any = {};
+  if (c.args) {
+    try {
+      parsed = typeof c.args === 'string' ? JSON.parse(c.args) : c.args;
+    } catch {
+      return '';
+    }
+  }
+  if (c.name === 'search_semantic' && parsed.query) {
+    return `"${String(parsed.query).slice(0, 40)}"`;
+  }
+  if (c.name === 'read_file' && parsed.path) {
+    return String(parsed.path);
+  }
+  if (c.name === 'edit_file' && parsed.path) {
+    const bytes = typeof parsed.content === 'string' ? parsed.content.length : 0;
+    return `${parsed.path} · ${bytes}B`;
+  }
+  return '';
+}
+
+function pathFromArgs(c: ToolCallChip): string | null {
+  if (!c.args) return null;
+  try {
+    const parsed = typeof c.args === 'string' ? JSON.parse(c.args) : c.args;
+    if (parsed && typeof parsed.path === 'string') return parsed.path;
+  } catch {
+    /* noop */
+  }
+  return null;
 }
 
 function ModePill({

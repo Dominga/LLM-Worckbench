@@ -170,10 +170,20 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       in App on `agent:snapshot:taken`. Tests: take→log append, revert→file
       restoration, latest-unreverted skipping flagged entries, refusal on
       non-git projects. Per-message revert UI lives in PR21 (source attribution).
-- [ ] **PR21** — Source-attribution UI. Tool calls per-message persisted into
-      session JSONL (extend `SessionMessage` with `tool_calls` field). Assistant
-      bubble renders chips: `🔍 search_semantic("foo")`, `📄 README.md:120-200`,
-      `✏️ src/x.go (15+/3-)`. Click chip → highlight source pane.
+- [x] **PR21** — Source-attribution UI for tool calls + revert affordance.
+      ChatTab subscribes to `agent:tool:request:<streamId>` /
+      `agent:tool:result:<streamId>` during a stream, lands a placeholder chip
+      under the assistant bubble on request, patches in the result/error on
+      response. Persisted `SessionMessage.toolCalls` (PR17) is hydrated on
+      session load so chips survive reloads. `ToolCallChips` renders an emoji
+      icon, tool name, and a derived summary
+      (`search_semantic("foo")`, `📄 README.md`, `✏️ x.md · 42B`). Chips with a
+      `path` arg are clickable → `onOpenFilePath`. Pending chips show `…`,
+      errored chips go red with `title=error`. New `AgentSnapshotControls`
+      block in `RagPanel` reads `ListAgentSnapshots(projectID)`, surfaces the
+      latest unreverted snapshot's short SHA + mode, exposes a `revert` button
+      that calls `RevertLastAgentSnapshot`. Subscribes to
+      `agent:snapshot:taken` to refresh after each agent run.
 
 ### Open
 

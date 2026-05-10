@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconRefresh, IconBox, IconBolt } from '@tabler/icons-react';
+import { IconRefresh, IconBox, IconBolt, IconArrowBackUp } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { V5 } from '../theme';
 import { Profile, InstanceStatus } from './types';
@@ -7,6 +7,8 @@ import {
   GetIndexStats,
   RebuildIndex,
   BuildEmbeddings,
+  ListAgentSnapshots,
+  RevertLastAgentSnapshot,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
@@ -257,6 +259,98 @@ export function RagPanel({
           title="Embed pending chunks (auto-starts embed profile)"
         >
           <IconBolt size={11} /> embed
+        </button>
+      </div>
+
+      <AgentSnapshotControls activeProjectId={activeProjectId} />
+    </div>
+  );
+}
+
+function AgentSnapshotControls({ activeProjectId }: { activeProjectId?: string }) {
+  type Snap = {
+    sha: string;
+    modeId: string;
+    ts?: string;
+    reverted?: boolean;
+  };
+  const [latest, setLatest] = useState<Snap | null>(null);
+  const [reverting, setReverting] = useState(false);
+
+  const refresh = async () => {
+    if (!activeProjectId) {
+      setLatest(null);
+      return;
+    }
+    try {
+      const list = (await ListAgentSnapshots(activeProjectId)) as Snap[] | null;
+      const unreverted = (list ?? []).filter((s) => !s.reverted);
+      setLatest(unreverted.length > 0 ? unreverted[unreverted.length - 1] : null);
+    } catch {
+      setLatest(null);
+    }
+  };
+  useEffect(() => {
+    refresh();
+    const cleanup = () => {
+      EventsOff('agent:snapshot:taken');
+    };
+    EventsOn('agent:snapshot:taken', () => refresh());
+    return cleanup;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
+  if (!activeProjectId || !latest) return null;
+
+  const onRevert = async () => {
+    if (reverting) return;
+    setReverting(true);
+    try {
+      const r = await RevertLastAgentSnapshot(activeProjectId, '');
+      notifications.show({
+        color: 'teal',
+        title: 'Reverted',
+        message: `${(r as Snap).modeId} · ${(r as Snap).sha.slice(0, 8)}`,
+      });
+      await refresh();
+    } catch (e: any) {
+      notifications.show({
+        color: 'red',
+        title: 'Revert failed',
+        message: String(e?.message ?? e),
+      });
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 6, fontSize: 10.5, color: V5.textDim }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span>last agent snapshot</span>
+        <span style={{ fontFamily: 'ui-monospace, monospace', color: V5.textMuted }}>
+          {latest.sha.slice(0, 8)} · {latest.modeId}
+        </span>
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={onRevert}
+          disabled={reverting}
+          style={{
+            padding: '2px 6px',
+            background: 'transparent',
+            border: `1px solid ${V5.borderSoft}`,
+            color: V5.text,
+            borderRadius: 4,
+            cursor: reverting ? 'not-allowed' : 'pointer',
+            fontSize: 10.5,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 3,
+            opacity: reverting ? 0.5 : 1,
+          }}
+          title="git reset --hard to the snapshot SHA"
+        >
+          <IconArrowBackUp size={10} /> revert
         </button>
       </div>
     </div>
