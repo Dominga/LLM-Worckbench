@@ -554,6 +554,27 @@ export default function App() {
     }
   };
 
+  // onOpenFilePath is the path-only flavour used by /search hits and
+  // future ad-hoc openers. Mirrors onSelectFile but skips the FileNode
+  // shape (search results don't carry isDir / size).
+  const onOpenFilePath = async (path: string) => {
+    if (!activeProject || !path) return;
+    try {
+      const fc = await ReadProjectFile(activeProject.ID, path);
+      setActiveFilePath(path);
+      setActiveFileContent(fc.content);
+      if (fc.truncated) {
+        notifications.show({
+          color: 'yellow',
+          title: 'File truncated',
+          message: `${path} exceeds 5 MB; showing the head.`,
+        });
+      }
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Open failed', message: String(e) });
+    }
+  };
+
   return (
     <div
       style={{
@@ -630,6 +651,7 @@ export default function App() {
           onAfterChat={refreshActiveSession}
           onCreateSession={onCreateSession}
           ensureSession={ensureSession}
+          onOpenFilePath={onOpenFilePath}
         />
       </div>
 

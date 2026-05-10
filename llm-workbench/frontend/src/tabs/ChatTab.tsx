@@ -15,10 +15,12 @@ import {
   MODE_BY_ID,
   Mode,
   InstanceStatus,
+  Profile,
   Project,
   Session,
   SessionMessageBackend,
 } from '../shell/types';
+import { main } from '../../wailsjs/go/models';
 import { MarkdownEditor, EditorHandle } from '../components/Editor';
 import { MarkdownPreview } from '../components/Preview';
 import {
@@ -26,6 +28,7 @@ import {
   ChatStream,
   ChatCancel,
   WriteProjectFile,
+  SearchProject,
 } from '../../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
@@ -41,10 +44,15 @@ export type ChatTabProps = {
   activeProject: Project | null;
   activeSession: Session | null;
   activeSessionMessages: SessionMessageBackend[];
+  // All profiles + their statuses are needed so /search can pick a
+  // running embed profile (or fall back to BM25-only).
+  profiles: Profile[];
+  statusByProfile: Record<string, InstanceStatus>;
   onChangeSessionMode: (modeId: string) => void;
   onAfterChat: () => Promise<void>;
   onCreateSession: () => void;
   ensureSession: () => Promise<Session | null>;
+  onOpenFilePath: (path: string) => void;
 };
 
 export function ChatTab({
@@ -56,10 +64,13 @@ export function ChatTab({
   activeProject,
   activeSession,
   activeSessionMessages,
+  profiles,
+  statusByProfile,
   onChangeSessionMode,
   onAfterChat,
   onCreateSession,
   ensureSession,
+  onOpenFilePath,
 }: ChatTabProps) {
   const healthy = activeStatus.healthy;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -179,6 +190,64 @@ export function ChatTab({
     return () => window.clearInterval(t);
   }, [lastSavedAt]);
 
+  // ─────────────────────────── /search state ───────────────────────────
+  const [searchHits, setSearchHits] = useState<main.ChunkHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(true);
+  const [lastSearchQuery, setLastSearchQuery] = useState<string>('');
+  const [searchUsedDense, setSearchUsedDense] = useState(false);
+
+  const runSearch = async (rawQuery: string) => {
+    if (!activeProject) {
+      notifications.show({
+        color: 'gray',
+        title: '/search needs a project',
+        message: 'Open a project before searching.',
+      });
+      return;
+    }
+    const query = rawQuery.trim();
+    if (!query) return;
+
+    // Pick the first running embed profile, if any. Falls back to
+    // BM25-only when none are up — caller still gets results, just
+    // without the dense ranker.
+    const runningEmbed = profiles.find(
+      (p) => p.Kind === 'embed' && statusByProfile[p.ID]?.running,
+    );
+    const sparseOnly = !runningEmbed;
+    setSearchUsedDense(!sparseOnly);
+    setSearching(true);
+    setSearchPanelOpen(true);
+    try {
+      const hits = await SearchProject(
+        activeProject.ID,
+        runningEmbed?.ID ?? '',
+        query,
+        8,
+        sparseOnly,
+        false,
+      );
+      setSearchHits(hits || []);
+      setLastSearchQuery(query);
+      if ((hits || []).length === 0) {
+        notifications.show({
+          color: 'gray',
+          title: 'No hits',
+          message: `Nothing matched "${query}". Did you Rebuild the index?`,
+        });
+      }
+    } catch (e: any) {
+      notifications.show({
+        color: 'red',
+        title: 'Search failed',
+        message: String(e?.message ?? e),
+      });
+    } finally {
+      setSearching(false);
+    }
+  };
+
   const switchView = (next: 'edit' | 'preview') => {
     if (next === 'preview') {
       setPreviewSource(editorRef.current?.getValue() ?? '');
@@ -187,8 +256,20 @@ export function ChatTab({
   };
 
   const send = async () => {
-    if (!prompt.trim() || streaming || !healthy) return;
+    if (!prompt.trim() || streaming) return;
     const userText = prompt.trim();
+
+    // /search is intercepted client-side: query the project's RAG index
+    // instead of streaming to the LLM. Results render in the panel
+    // above the input.
+    if (userText.toLowerCase().startsWith('/search ') || userText.toLowerCase() === '/search') {
+      const q = userText.replace(/^\/search\s*/i, '');
+      setPrompt('');
+      await runSearch(q);
+      return;
+    }
+
+    if (!healthy) return;
 
     // Promote ad-hoc chats into a persisted session whenever a project
     // is active. This way the very first message a user types ends up
@@ -425,6 +506,149 @@ export function ChatTab({
           </div>
         </div>
 
+        {/* Search results — only when /search was run. */}
+        {(searchHits.length > 0 || searching) && (
+          <div style={{ padding: '0 22px 8px', flex: 'none' }}>
+            <div
+              style={{
+                background: V5.surface,
+                border: `1px solid ${V5.border}`,
+                borderRadius: 10,
+                padding: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 11,
+                  color: V5.textMuted,
+                  marginBottom: searchPanelOpen ? 6 : 0,
+                  cursor: 'pointer',
+                }}
+                onClick={() => setSearchPanelOpen((o) => !o)}
+              >
+                {searchPanelOpen ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
+                <span style={{ fontWeight: 600, color: V5.text }}>
+                  {searching ? 'searching…' : `${searchHits.length} hit${searchHits.length === 1 ? '' : 's'}`}
+                </span>
+                {lastSearchQuery && !searching && (
+                  <>
+                    <span style={{ color: V5.textDim }}>·</span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>"{lastSearchQuery}"</span>
+                  </>
+                )}
+                <span style={{ flex: 1 }} />
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: '1px 6px',
+                    borderRadius: 999,
+                    background: searchUsedDense ? `${V5.accent}1c` : `${V5.warn}1c`,
+                    color: searchUsedDense ? V5.accent : V5.warn,
+                    border: `1px solid ${searchUsedDense ? V5.accent : V5.warn}44`,
+                  }}
+                  title={
+                    searchUsedDense
+                      ? 'dense (vec) + sparse (BM25), fused via RRF'
+                      : 'BM25 only — no embed profile is running'
+                  }
+                >
+                  {searchUsedDense ? 'hybrid' : 'sparse'}
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSearchHits([]);
+                    setLastSearchQuery('');
+                  }}
+                  title="Clear"
+                  style={{
+                    padding: '2px 6px',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: V5.textMuted,
+                  }}
+                >
+                  <IconX size={11} />
+                </button>
+              </div>
+              {searchPanelOpen && !searching && searchHits.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflow: 'auto' }}>
+                  {searchHits.map((h, i) => (
+                    <button
+                      key={`${h.path}-${h.chunkId}-${i}`}
+                      onClick={() => onOpenFilePath(h.path)}
+                      style={{
+                        textAlign: 'left',
+                        background: V5.bg,
+                        border: `1px solid ${V5.borderSoft}`,
+                        borderRadius: 6,
+                        padding: '6px 8px',
+                        cursor: 'pointer',
+                        color: V5.text,
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 11,
+                          color: V5.textMuted,
+                          marginBottom: 3,
+                        }}
+                      >
+                        <IconFile size={11} />
+                        <span
+                          style={{
+                            fontFamily: 'ui-monospace, monospace',
+                            color: V5.text,
+                            fontWeight: 500,
+                          }}
+                        >
+                          {h.path}
+                        </span>
+                        <span style={{ color: V5.textDim }}>
+                          {h.startByte}–{h.endByte}
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        <span
+                          style={{
+                            fontFamily: 'ui-monospace, monospace',
+                            fontSize: 10,
+                            color: V5.textDim,
+                          }}
+                          title={`dense rank ${h.denseRank || '–'} · sparse rank ${h.sparseRank || '–'}`}
+                        >
+                          score {h.score.toFixed(4)}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          lineHeight: 1.45,
+                          color: V5.text,
+                          whiteSpace: 'pre-wrap',
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                        }}
+                      >
+                        {h.content}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Input */}
         <div style={{ padding: '12px 22px 14px', flex: 'none' }}>
           <div
@@ -445,7 +669,7 @@ export function ChatTab({
                 }
               }}
               disabled={streaming}
-              placeholder="Continue, or @-mention a file or character…"
+              placeholder="Continue, /search to query the index, or @-mention a file…"
               rows={2}
               style={{
                 width: '100%',
@@ -520,7 +744,7 @@ export function ChatTab({
               ) : (
                 <button
                   onClick={send}
-                  disabled={!healthy || !prompt.trim()}
+                  disabled={(!healthy && !prompt.trim().toLowerCase().startsWith('/search')) || !prompt.trim()}
                   style={{
                     width: 28,
                     height: 28,

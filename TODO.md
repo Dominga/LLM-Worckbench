@@ -108,8 +108,14 @@ DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlit
       skipping either ranker (e.g. when no embed profile is configured yet).
       App binding `SearchProject(projectID, embedProfileID, query, k, sparseOnly, denseOnly)`.
       Tests: RRF math, top-K tie-break, sparse-only end-to-end, embed-required-for-dense guard.
-- [ ] **PR13** — `/search …` slash-command parsed in chat input → results panel inline (chips with file + start–end).
-      No automatic context-injection yet (that lands in M3 with the agent loop).
+- [x] **PR13** — `/search …` intercepted client-side in `ChatTab.send()` (case-insensitive,
+      space- or no-arg form), routed to `SearchProject(...)`. Results panel above the input:
+      collapsible header with hit count + last query + ranker badge (`hybrid` if a kind=embed
+      profile is running, otherwise `sparse`), per-hit chip showing path, byte range, fused
+      score, and a 3-line clamped content preview. Click a hit → opens the file in the
+      Edit/Preview pane via new `App.onOpenFilePath` helper. Send button stays enabled while
+      an unhealthy chat server prevents normal sends, so `/search` works without a chat profile up.
+      No auto-context-injection — that lands in M3 with the agent loop.
 - [ ] **PR14** — Reindex job: explicit "Rebuild index" button + on-save trigger via existing 3s polling tick.
       Progress event `rag:index:progress:<projectID>` with chunks_done / chunks_total.
 

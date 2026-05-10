@@ -40,6 +40,7 @@ export type MainPaneProps = {
   onChangeSessionMode: (modeId: string) => void;
   onAfterChat: () => Promise<void>;
   onCreateSession: () => void;
+  onOpenFilePath: (path: string) => void;
 };
 
 export function MainPane(props: MainPaneProps) {
@@ -74,10 +75,13 @@ export function MainPane(props: MainPaneProps) {
           activeProject={props.activeProject}
           activeSession={props.activeSession}
           activeSessionMessages={props.activeSessionMessages}
+          profiles={props.profiles}
+          statusByProfile={props.statusByProfile}
           onChangeSessionMode={props.onChangeSessionMode}
           onAfterChat={props.onAfterChat}
           onCreateSession={props.onCreateSession}
           ensureSession={props.ensureSession}
+          onOpenFilePath={props.onOpenFilePath}
         />
       </div>
       <div
