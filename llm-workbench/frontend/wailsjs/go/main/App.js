@@ -106,6 +106,10 @@ export function LoadInitialDoc() {
   return window['go']['main']['App']['LoadInitialDoc']();
 }
 
+export function LoadModeTemplate(arg1, arg2) {
+  return window['go']['main']['App']['LoadModeTemplate'](arg1, arg2);
+}
+
 export function LoadScript(arg1, arg2) {
   return window['go']['main']['App']['LoadScript'](arg1, arg2);
 }
@@ -120,6 +124,10 @@ export function PickDirectory(arg1) {
 
 export function PickFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['PickFile'](arg1, arg2, arg3);
+}
+
+export function PreviewModeTemplate(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PreviewModeTemplate'](arg1, arg2, arg3, arg4);
 }
 
 export function ProfileLogs(arg1) {
@@ -164,6 +172,10 @@ export function RevertLastAgentSnapshot(arg1, arg2) {
 
 export function RunScript(arg1, arg2) {
   return window['go']['main']['App']['RunScript'](arg1, arg2);
+}
+
+export function SaveModeTemplate(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveModeTemplate'](arg1, arg2, arg3);
 }
 
 export function SaveScript(arg1, arg2, arg3) {

@@ -134,8 +134,20 @@ DESIGN.md §5.5 + §9 M4. Decisions:
       number / switch). Submit validates required fields and calls
       `CreateSessionWithParams`. Frontend `Mode` type extended with
       `params?` + `systemPromptTemplate?`.
-- **PR27** — Prompt Lab as the mode-template editor (TD17). Today's
-  Lab is JS-only.
+- [x] **PR27** — Prompt Lab as the mode-template editor. LabTab gets a
+      `Modes`/`Scripts` segmented toggle. New `ModesPanel`: mode list (source
+      chip per row: builtin/global/project) → CM6 markdown editor for the
+      template → right rail with params form (driven by `mode.params`) and a
+      live debounced (200ms) preview. Edits to a builtin/global mode's
+      template land in the project-local dir so the user owns the override.
+      Backend bindings: `LoadModeTemplate(projectID, modeID)`,
+      `SaveModeTemplate(projectID, modeID, content)`,
+      `PreviewModeTemplate(projectID, modeID, source, params)`. New
+      `ModeService.RenderWithSource` lets the preview render an unsaved
+      buffer; `ModeService.TemplatePath` resolves on-disk path
+      (project-local → global → absolute) so SaveModeTemplate has a
+      well-defined destination. The Scripts segment keeps the PR24 JS Lab
+      unchanged.
 - TD12 — JSDoc `@param` → auto-generated parameter form on the Lab tab.
 - TD13 — Workflow TOML triggers + steps (`[workflow.foo]`).
 - TD14 — External Python sidecar tools (`[external_tool.*]`).

@@ -467,6 +467,47 @@ func (s *ModeService) buildTemplateContext(projectID string, params map[string]a
 	return ctx
 }
 
+// RenderWithSource renders an arbitrary template source (not loaded
+// from disk) against the project+params context. Used by the Prompt
+// Lab preview pane so the user can see substitutions on the unsaved
+// buffer without round-tripping a Save.
+func (s *ModeService) RenderWithSource(projectID, source string, params map[string]any) string {
+	return renderTemplate(source, s.buildTemplateContext(projectID, params))
+}
+
+// TemplatePath resolves the on-disk path the mode's system_prompt_template
+// would load from. Project-local wins over global; absolute paths are
+// returned as-is. Returns the path that exists, or the project-local
+// candidate (which doesn't exist yet) so SaveModeTemplate has a
+// well-defined destination for new templates.
+func (s *ModeService) TemplatePath(projectID string, m Mode) (string, error) {
+	if strings.TrimSpace(m.SystemPromptTemplate) == "" {
+		return "", fmt.Errorf("mode %q has no system_prompt_template", m.ID)
+	}
+	path := m.SystemPromptTemplate
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	if s.projects != nil && projectID != "" {
+		if p, err := s.projects.Get(projectID); err == nil {
+			candidate := filepath.Join(p.Path, ProjectDirName, "modes", path)
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				return candidate, nil
+			}
+			// Project candidate even if missing — SaveModeTemplate will
+			// create it.
+			return candidate, nil
+		}
+	}
+	if g := globalModesDir(); g != "" {
+		candidate := filepath.Join(g, path)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("template %q not found", path)
+}
+
 // renderTemplate substitutes `{{key}}` placeholders with the matching
 // value from ctx. Unknown keys are left as-is (visible `{{foo}}`) so
 // authors notice typos rather than getting silently empty output.

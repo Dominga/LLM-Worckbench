@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -170,6 +173,92 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 }
 
 // ─────────────────────────── Scripts store ──────────────────────────
+
+// LoadModeTemplate returns the markdown template source for the
+// mode's `system_prompt_template`. Empty string when the mode has
+// only an inline SystemPrompt and no template file. Used by the
+// Prompt-Lab template editor.
+func (a *App) LoadModeTemplate(projectID, modeID string) (string, error) {
+	if a.modes == nil {
+		return "", fmt.Errorf("modes not available")
+	}
+	m := a.modes.Resolve(projectID, modeID)
+	if m.SystemPromptTemplate == "" {
+		return m.SystemPrompt, nil
+	}
+	path, err := a.modes.TemplatePath(projectID, m)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil // empty buffer for a not-yet-saved template
+		}
+		return "", err
+	}
+	return string(data), nil
+}
+
+// SaveModeTemplate writes `content` to the mode's template path. If
+// the mode's source is builtin/global, the file lands in the
+// project-local modes dir (override), leaving the upstream untouched.
+func (a *App) SaveModeTemplate(projectID, modeID, content string) error {
+	if a.modes == nil {
+		return fmt.Errorf("modes not available")
+	}
+	m := a.modes.Resolve(projectID, modeID)
+	if m.SystemPromptTemplate == "" {
+		return fmt.Errorf("mode %q has no system_prompt_template; can't save", modeID)
+	}
+	// For builtin or global modes, route writes into the project-local
+	// modes dir so the user owns the override.
+	target := ""
+	if m.Source == ModeSourceProject {
+		path, err := a.modes.TemplatePath(projectID, m)
+		if err != nil {
+			return err
+		}
+		target = path
+	} else {
+		if a.projects == nil {
+			return fmt.Errorf("project service unavailable")
+		}
+		p, err := a.projects.Get(projectID)
+		if err != nil {
+			return err
+		}
+		target = filepath.Join(p.Path, ProjectDirName, "modes", m.SystemPromptTemplate)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// PreviewModeTemplate renders the supplied source (unsaved buffer)
+// against project metadata + the provided params so the editor's
+// preview pane reflects what the agent would see. Pass empty source
+// to use the persisted template instead.
+func (a *App) PreviewModeTemplate(projectID, modeID, source string, params map[string]any) (string, error) {
+	if a.modes == nil {
+		return "", fmt.Errorf("modes not available")
+	}
+	if strings.TrimSpace(source) == "" {
+		// Persisted template path.
+		m := a.modes.Resolve(projectID, modeID)
+		return a.modes.ResolveSystemPrompt(projectID, m, params)
+	}
+	return a.modes.RenderWithSource(projectID, source, params), nil
+}
 
 // ListScripts returns the persisted Prompt-Lab scripts for the
 // project, sorted by name. Empty directory returns an empty slice.

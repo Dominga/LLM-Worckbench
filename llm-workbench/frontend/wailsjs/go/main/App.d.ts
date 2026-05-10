@@ -54,6 +54,8 @@ export function ListSessions(arg1:string):Promise<Array<main.Session>>;
 
 export function LoadInitialDoc():Promise<main.InitialDoc>;
 
+export function LoadModeTemplate(arg1:string,arg2:string):Promise<string>;
+
 export function LoadScript(arg1:string,arg2:string):Promise<string>;
 
 export function OpenProject(arg1:string):Promise<main.Project>;
@@ -61,6 +63,8 @@ export function OpenProject(arg1:string):Promise<main.Project>;
 export function PickDirectory(arg1:string):Promise<string>;
 
 export function PickFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function PreviewModeTemplate(arg1:string,arg2:string,arg3:string,arg4:Record<string, any>):Promise<string>;
 
 export function ProfileLogs(arg1:string):Promise<Array<string>>;
 
@@ -83,6 +87,8 @@ export function RestartProfile(arg1:string):Promise<void>;
 export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.AgentSnapshot>;
 
 export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
+
+export function SaveModeTemplate(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveScript(arg1:string,arg2:string,arg3:string):Promise<main.ScriptFile>;
 
