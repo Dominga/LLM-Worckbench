@@ -100,10 +100,11 @@ func (c *ChatService) streamWithTools(
 	// Builtin modes (`research`, `agent`, `auto-edit`) all do; project
 	// overrides may not, in which case we just send the user/assistant
 	// history as-is.
-	if strings.TrimSpace(mode.SystemPrompt) != "" {
+	sysPrompt := resolveSystemPromptFor(c, ac, mode)
+	if strings.TrimSpace(sysPrompt) != "" {
 		convo = append(convo, map[string]any{
 			"role":    "system",
-			"content": mode.SystemPrompt,
+			"content": sysPrompt,
 		})
 	}
 	for _, m := range messages {
@@ -282,7 +283,7 @@ func (c *ChatService) streamWithReAct(
 	out := AgentLoopResult{}
 
 	convo := []map[string]any{
-		{"role": "system", "content": buildReActPrompt(mode.SystemPrompt, tools)},
+		{"role": "system", "content": buildReActPrompt(resolveSystemPromptFor(c, ac, mode), tools)},
 	}
 	for _, m := range messages {
 		convo = append(convo, map[string]any{"role": m.Role, "content": m.Content})
@@ -386,6 +387,26 @@ func (c *ChatService) streamWithReAct(
 		convo = append(convo, map[string]any{"role": "user", "content": obs})
 	}
 	return out, fmt.Errorf("react loop hit %d-iteration cap without Final Answer", maxAgentIterations)
+}
+
+// resolveSystemPromptFor renders the mode's system prompt with
+// template + placeholder substitution when ModeService is wired;
+// otherwise falls back to the inline SystemPrompt verbatim. Errors
+// from template loading degrade gracefully — the inline string (if
+// any) still gets used.
+func resolveSystemPromptFor(c *ChatService, ac *AgentContext, mode Mode) string {
+	if c != nil && c.modes != nil {
+		projectID := ""
+		var params map[string]any
+		if ac != nil {
+			projectID = ac.ProjectID
+			params = ac.Params
+		}
+		if prompt, err := c.modes.ResolveSystemPrompt(projectID, mode, params); err == nil {
+			return prompt
+		}
+	}
+	return mode.SystemPrompt
 }
 
 // requestApprovalIfWrite checks the active mode's policy and, when

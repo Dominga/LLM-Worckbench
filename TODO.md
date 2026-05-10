@@ -103,12 +103,36 @@ DESIGN.md §5.5 + §9 M4. Decisions:
       surface so new users land on a working example. Tab toggle in
       `TitleBar` flipped to `enabled: true`.
 
-### Deferred to TDs
+- [x] **PR25** — Mode prompt templates (DESIGN §4.6 alignment). `Mode` gains
+      `SystemPromptTemplate string` (relative path or absolute) and
+      `Params []ModeParam` (name/type/default/required/description). New
+      `ModeService.ResolveSystemPrompt(projectID, mode, params)` loads the
+      template file (looks up project-local → global → absolute), renders
+      `{{project.id|name|path}}` and `{{param.<name>}}` placeholders via a
+      regex substitutor (unknown keys stay literal so typos surface).
+      Inline `SystemPrompt` remains as a fallback. New global modes dir
+      `~/.config/llm-workbench/modes/*.toml` with precedence
+      `project > global > builtin`. `AgentContext.Params` carries
+      session-bound values; agent loop (`resolveSystemPromptFor`) routes
+      every system-message build through the service so live edits to a
+      template file land on the next turn. Tests: placeholder render with
+      unknown-key passthrough, template load + project params, inline
+      fallback, missing-template error, global vs project precedence.
 
+### Deferred to follow-ups
+
+- **PR26** — Session-bound mode params capture in NewSessionModal +
+  `Session.Params` persistence. Backend already accepts an AgentContext.Params
+  map; UI just needs the param form.
+- **PR27** — Prompt Lab as the mode-template editor (TD17). Today's
+  Lab is JS-only.
 - TD12 — JSDoc `@param` → auto-generated parameter form on the Lab tab.
 - TD13 — Workflow TOML triggers + steps (`[workflow.foo]`).
 - TD14 — External Python sidecar tools (`[external_tool.*]`).
 - TD15 — Script API versioning (`requireApi("1.0")`).
+- TD18 — Scripts global/per-project split (mirror modes: `~/.config/llm-workbench/scripts/`
+  alongside per-project `<project>/.llm-workshop/scripts/`, project overrides
+  global by name). Once landed, list-merge in `ScriptStore`.
 
 ## Milestone 3 — Agent loop
 
@@ -243,6 +267,58 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
   cancels stream; we'll need to also cancel an in-flight tool handler).
 
 ## Tech debt / nice-to-have
+
+### TD16 — Mode system_prompt_template (DESIGN §4.6 alignment)
+
+**Status:** PR16 stored `SystemPrompt` as an inline string field on `Mode`.
+DESIGN §4.6 says it should be a relative path to a markdown template:
+
+```toml
+[mode."narrative-coauthor"]
+system_prompt_template = "modes/narrative-coauthor.system.md"
+```
+
+The template can carry placeholders that the agent loop substitutes before
+sending to the LLM — project metadata, session-bound parameters captured at
+session-creation time, etc. Inline strings can't be edited in a real markdown
+editor with diff/preview, can't pull in fragments from other files, and can't
+be authored by the same Prompt Lab UX that owns project content.
+
+**Refactor plan:**
+
+1. **Mode struct:** add `SystemPromptTemplate string` (relative to project
+   root, default `.llm-workshop/modes/<id>.system.md`). Keep `SystemPrompt`
+   as a deprecated inline fallback during transition.
+2. **`ModeService.Resolve`** loads the template file when present, falls back
+   to the inline string otherwise. Templates resolve at AGENT-LOOP time so
+   edits land on the next turn without reloading the session.
+3. **Placeholder syntax:** `{{project.name}}`, `{{project.path}}`,
+   `{{param.<name>}}`. Built-ins always available; user params declared in a
+   `[mode.params]` block with name/type/default/required.
+4. **Session-bound params:** extend `Session` with a `params map[string]any`
+   field, captured at NewSessionModal via an auto-generated form from the
+   mode's params schema.
+5. **Builtin modes:** ship `.system.md` files alongside the binary (or as Go
+   `embed.FS`) instead of the M3 inline strings.
+
+### TD17 — Prompt Lab as the mode-template editor
+
+The current Lab tab edits JS scripts (M4 PR22–24). That's a useful surface
+for workflows / tooling but it's NOT what the original DESIGN §4.6 +
+§5.5 flow intended. The PRIMARY Lab use case is authoring parameterised
+mode prompt templates with a live preview:
+
+- left rail → list of modes (builtin + project-local), filter by source
+- editor → markdown template content with `{{…}}` placeholder highlighting
+- right pane → preview with resolved placeholders given the current
+  session/test params
+- bottom → "Run with these params" button that opens a throwaway chat
+  session using this mode template
+
+Reuse PR24's CM6 setup but with markdown lang + a separate file backend
+(`<project>/.llm-workshop/modes/<id>.system.md`). Keep the JS-script tab
+underneath as a sub-mode (or move to a separate "Scripts" tab once we
+materialise workflows in TD13).
 
 ### TD12 — JSDoc-driven Lab parameter form
 

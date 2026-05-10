@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -23,6 +24,7 @@ type ModeSource string
 
 const (
 	ModeSourceBuiltin ModeSource = "builtin"
+	ModeSourceGlobal  ModeSource = "global"
 	ModeSourceProject ModeSource = "project"
 	ModeSourcePlugin  ModeSource = "plugin"
 )
@@ -61,6 +63,17 @@ const (
 	ContextRAGExplicit ContextStrategy = "rag-explicit"
 )
 
+// ModeParam declares one input the mode's prompt template expects.
+// Captured at session creation time and substituted into the rendered
+// system prompt as `{{param.<name>}}`.
+type ModeParam struct {
+	Name        string `json:"name" toml:"name"`
+	Type        string `json:"type" toml:"type"` // string|int|number|bool
+	Default     any    `json:"default,omitempty" toml:"default"`
+	Required    bool   `json:"required,omitempty" toml:"required"`
+	Description string `json:"description,omitempty" toml:"description"`
+}
+
 type Mode struct {
 	ID     string     `json:"id" toml:"id"`
 	Name   string     `json:"name" toml:"name"`
@@ -69,10 +82,28 @@ type Mode struct {
 	Desc   string     `json:"desc" toml:"desc"`
 	Plugin string     `json:"plugin,omitempty" toml:"-"`
 
-	// SystemPrompt is prepended as the system message for every turn
-	// when this mode is active. Multi-line strings are fine — TOML
-	// triple-quote literals work well for project-local overrides.
+	// SystemPromptTemplate is the project-relative (or absolute) path
+	// to a markdown file whose contents become the rendered system
+	// prompt. Placeholder syntax: `{{project.id}}`, `{{project.name}}`,
+	// `{{project.path}}`, `{{param.<name>}}`. DESIGN.md §4.6.
+	//
+	// Resolution order when set as a bare basename:
+	//   1. `<project>/.llm-workshop/modes/<value>` (if exists)
+	//   2. `<globalModesDir>/<value>` (if exists)
+	//   3. error — referenced template not found
+	SystemPromptTemplate string `json:"systemPromptTemplate,omitempty" toml:"system_prompt_template"`
+
+	// SystemPrompt is the inline fallback used when no template path
+	// is set or the file can't be loaded. Multi-line strings via
+	// TOML triple-quote work for short overrides without authoring a
+	// separate .system.md.
 	SystemPrompt string `json:"systemPrompt,omitempty" toml:"system_prompt"`
+
+	// Params declares the inputs the template expects. The
+	// NewSessionModal renders a form from this schema (TD16 follow-up
+	// is the UI side); ChatService stamps the values into Session at
+	// create time.
+	Params []ModeParam `json:"params,omitempty" toml:"params"`
 
 	// ToolWhitelist enumerates tool names the agent may call. nil means
 	// "all registered tools"; empty slice means "no tools" (chat only).
@@ -229,15 +260,12 @@ type projectModeFile struct {
 	Mode
 }
 
-// loadProjectModes reads `<projectRoot>/.llm-workshop/modes/*.toml`
-// into Mode values. Bad files are skipped with a warning; one broken
-// override should not deny the user every project-local mode.
-func loadProjectModes(projectRoot string) ([]Mode, []string) {
-	dir := filepath.Join(projectRoot, ProjectDirName, "modes")
+// loadModesDir reads `*.toml` from `dir` and stamps each with the
+// given source. Used by both global and per-project loaders so the
+// parse loop stays in one place.
+func loadModesDir(dir string, source ModeSource) ([]Mode, []string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// Missing directory is the normal case for projects that haven't
-		// added overrides yet — quietly return.
 		return nil, nil
 	}
 	var modes []Mode
@@ -261,7 +289,7 @@ func loadProjectModes(projectRoot string) ([]Mode, []string) {
 		if m.ID == "" {
 			m.ID = strings.TrimSuffix(e.Name(), ".toml")
 		}
-		m.Source = ModeSourceProject
+		m.Source = source
 		m.normalise()
 		if vErr := m.validate(); vErr != nil {
 			warns = append(warns, vErr.Error())
@@ -270,6 +298,18 @@ func loadProjectModes(projectRoot string) ([]Mode, []string) {
 		modes = append(modes, m)
 	}
 	return modes, warns
+}
+
+func loadProjectModes(projectRoot string) ([]Mode, []string) {
+	return loadModesDir(filepath.Join(projectRoot, ProjectDirName, "modes"), ModeSourceProject)
+}
+
+func loadGlobalModes() ([]Mode, []string) {
+	dir := globalModesDir()
+	if dir == "" {
+		return nil, nil
+	}
+	return loadModesDir(dir, ModeSourceGlobal)
 }
 
 // ───────────────────────────── Service ──────────────────────────────
@@ -287,17 +327,23 @@ func NewModeService(ps *ProjectService) *ModeService {
 }
 
 // List returns the merged + sorted set of modes available for the
-// given project. Empty projectID returns the builtin set.
+// given project. Precedence on collision: project > global > builtin.
+// Empty projectID skips the project layer.
 func (s *ModeService) List(projectID string) []Mode {
 	merged := map[string]Mode{}
 	for _, m := range ListBuiltinModes() {
 		merged[m.ID] = m
 	}
+	if globals, _ := loadGlobalModes(); globals != nil {
+		for _, m := range globals {
+			merged[m.ID] = m
+		}
+	}
 	if projectID != "" && s.projects != nil {
 		if p, err := s.projects.Get(projectID); err == nil {
 			locals, _ := loadProjectModes(p.Path)
 			for _, m := range locals {
-				merged[m.ID] = m // project overrides builtin
+				merged[m.ID] = m
 			}
 		}
 	}
@@ -306,13 +352,26 @@ func (s *ModeService) List(projectID string) []Mode {
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		// Builtin first, project after, then alphabetical inside each.
+		// Builtin first, then global, then project; alphabetical inside.
 		if out[i].Source != out[j].Source {
-			return out[i].Source == ModeSourceBuiltin
+			return sourceRank(out[i].Source) < sourceRank(out[j].Source)
 		}
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+func sourceRank(s ModeSource) int {
+	switch s {
+	case ModeSourceBuiltin:
+		return 0
+	case ModeSourceGlobal:
+		return 1
+	case ModeSourceProject:
+		return 2
+	default:
+		return 3
+	}
 }
 
 // Resolve fetches the merged mode for a project + id. Falls back to a
@@ -327,8 +386,103 @@ func (s *ModeService) Resolve(projectID, modeID string) Mode {
 	if m, ok := ModeByID("chat-only"); ok {
 		return m
 	}
-	// Last-ditch synthetic — should never hit unless builtins are wiped.
 	m := Mode{ID: "chat-only", Name: "Chat only", Source: ModeSourceBuiltin}
 	m.normalise()
 	return m
+}
+
+// ResolveSystemPrompt loads the mode's prompt template (preferring
+// SystemPromptTemplate when set, falling back to the inline
+// SystemPrompt) and substitutes `{{project.*}}` + `{{param.*}}`
+// placeholders. The agent loop calls this once per agent run with the
+// session's captured params.
+func (s *ModeService) ResolveSystemPrompt(projectID string, m Mode, params map[string]any) (string, error) {
+	tmpl := m.SystemPrompt
+	if strings.TrimSpace(m.SystemPromptTemplate) != "" {
+		body, err := s.loadTemplate(projectID, m.SystemPromptTemplate)
+		if err != nil {
+			// Template miss falls back to the inline string rather than
+			// dropping the agent to no system prompt at all.
+			if strings.TrimSpace(tmpl) == "" {
+				return "", fmt.Errorf("mode %s: load template %s: %w", m.ID, m.SystemPromptTemplate, err)
+			}
+		} else {
+			tmpl = body
+		}
+	}
+	ctx := s.buildTemplateContext(projectID, params)
+	return renderTemplate(tmpl, ctx), nil
+}
+
+// loadTemplate resolves a relative template path against (in order):
+//   1. `<projectRoot>/.llm-workshop/modes/<value>`
+//   2. `<globalModesDir>/<value>`
+//   3. absolute path (when value is already absolute)
+//
+// Absolute and project-rooted paths are accepted as-is. Used for both
+// the mode's SystemPromptTemplate field and any future include/import.
+func (s *ModeService) loadTemplate(projectID, path string) (string, error) {
+	if filepath.IsAbs(path) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	if s.projects != nil && projectID != "" {
+		if p, err := s.projects.Get(projectID); err == nil {
+			candidate := filepath.Join(p.Path, ProjectDirName, "modes", path)
+			if data, err := os.ReadFile(candidate); err == nil {
+				return string(data), nil
+			}
+		}
+	}
+	if g := globalModesDir(); g != "" {
+		candidate := filepath.Join(g, path)
+		if data, err := os.ReadFile(candidate); err == nil {
+			return string(data), nil
+		}
+	}
+	return "", fmt.Errorf("template %q not found in project or global modes dir", path)
+}
+
+// buildTemplateContext assembles the variable map fed to renderTemplate.
+// Always seeded with project metadata; the caller's `params` get
+// namespaced under `param.<name>` so they can't clobber built-ins.
+func (s *ModeService) buildTemplateContext(projectID string, params map[string]any) map[string]any {
+	ctx := map[string]any{
+		"project.id":   projectID,
+		"project.name": "",
+		"project.path": "",
+	}
+	if s.projects != nil && projectID != "" {
+		if p, err := s.projects.Get(projectID); err == nil {
+			ctx["project.name"] = p.Name
+			ctx["project.path"] = p.Path
+		}
+	}
+	for k, v := range params {
+		ctx["param."+k] = v
+	}
+	return ctx
+}
+
+// renderTemplate substitutes `{{key}}` placeholders with the matching
+// value from ctx. Unknown keys are left as-is (visible `{{foo}}`) so
+// authors notice typos rather than getting silently empty output.
+var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}`)
+
+func renderTemplate(template string, ctx map[string]any) string {
+	return placeholderRe.ReplaceAllStringFunc(template, func(match string) string {
+		sub := placeholderRe.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		key := sub[1]
+		v, ok := ctx[key]
+		if !ok {
+			return match
+		}
+		return fmt.Sprintf("%v", v)
+	})
 }

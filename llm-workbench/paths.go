@@ -51,3 +51,14 @@ func projectsPath() (string, error) {
 	}
 	return filepath.Join(d, "projects.toml"), nil
 }
+
+// globalModesDir is `~/.config/llm-workbench/modes/`. Per-user mode
+// overrides + their .system.md templates live here. Missing returns
+// "" without error so callers can treat it as "no overrides".
+func globalModesDir() string {
+	d, err := configDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "modes")
+}

@@ -169,6 +169,143 @@ func TestModeServiceResolveFallback(t *testing.T) {
 	}
 }
 
+func TestRenderTemplateSubstitutesPlaceholders(t *testing.T) {
+	tmpl := `Project: {{project.name}} ({{project.id}})
+Topic: {{param.topic}}
+Unknown: {{param.missing}}`
+	out := renderTemplate(tmpl, map[string]any{
+		"project.id":   "p1",
+		"project.name": "Test",
+		"param.topic":  "weather",
+	})
+	if !strings.Contains(out, "Project: Test (p1)") {
+		t.Errorf("project placeholders not substituted: %q", out)
+	}
+	if !strings.Contains(out, "Topic: weather") {
+		t.Errorf("param placeholder not substituted: %q", out)
+	}
+	if !strings.Contains(out, "{{param.missing}}") {
+		t.Errorf("unknown placeholder should remain literal: %q", out)
+	}
+}
+
+func TestResolveSystemPromptFromTemplate(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, ProjectDirName, "modes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmplPath := "narrative.system.md"
+	if err := os.WriteFile(filepath.Join(dir, tmplPath),
+		[]byte("You are a narrator for {{project.name}}.\nFocus on {{param.theme}}."),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	prs := &ProjectService{projects: []Project{{ID: "p", Path: tmp, Name: "Test"}}}
+	svc := NewModeService(prs)
+	m := Mode{ID: "narrative", SystemPromptTemplate: tmplPath}
+	m.normalise()
+	out, err := svc.ResolveSystemPrompt("p", m, map[string]any{"theme": "dread"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "narrator for Test") {
+		t.Errorf("project.name not resolved: %q", out)
+	}
+	if !strings.Contains(out, "Focus on dread") {
+		t.Errorf("param.theme not resolved: %q", out)
+	}
+}
+
+func TestResolveSystemPromptFallsBackToInline(t *testing.T) {
+	prs := &ProjectService{projects: []Project{{ID: "p", Path: t.TempDir(), Name: "X"}}}
+	svc := NewModeService(prs)
+	m := Mode{ID: "x", SystemPrompt: "inline prompt"}
+	m.normalise()
+	out, err := svc.ResolveSystemPrompt("p", m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "inline prompt" {
+		t.Errorf("expected inline, got %q", out)
+	}
+}
+
+func TestResolveSystemPromptMissingTemplateErrs(t *testing.T) {
+	prs := &ProjectService{projects: []Project{{ID: "p", Path: t.TempDir(), Name: "X"}}}
+	svc := NewModeService(prs)
+	m := Mode{ID: "x", SystemPromptTemplate: "ghost.md"}
+	m.normalise()
+	_, err := svc.ResolveSystemPrompt("p", m, nil)
+	if err == nil {
+		t.Fatal("expected error for missing template without inline fallback")
+	}
+}
+
+func TestModePrecedenceProjectOverGlobalOverBuiltin(t *testing.T) {
+	// Stand up a global modes dir pointing at a temp home.
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	gdir := filepath.Join(home, AppDirName, "modes")
+	if err := os.MkdirAll(gdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gdir, "agent.toml"),
+		[]byte(`name = "Global agent"
+desc = "from global"
+system_prompt = "global"
+approval = "always"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Project layer with same id overrides global.
+	proj := t.TempDir()
+	pdir := filepath.Join(proj, ProjectDirName, "modes")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, "agent.toml"),
+		[]byte(`name = "Project agent"
+desc = "from project"
+system_prompt = "project"
+approval = "always"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prs := &ProjectService{projects: []Project{{ID: "p", Path: proj}}}
+	svc := NewModeService(prs)
+	list := svc.List("p")
+	var found Mode
+	for _, m := range list {
+		if m.ID == "agent" {
+			found = m
+		}
+	}
+	if found.Name != "Project agent" {
+		t.Errorf("project should win: got %q", found.Name)
+	}
+	if found.Source != ModeSourceProject {
+		t.Errorf("source = %q, want project", found.Source)
+	}
+
+	// Drop the project override → global should win.
+	if err := os.Remove(filepath.Join(pdir, "agent.toml")); err != nil {
+		t.Fatal(err)
+	}
+	list = svc.List("p")
+	for _, m := range list {
+		if m.ID == "agent" {
+			found = m
+		}
+	}
+	if found.Name != "Global agent" {
+		t.Errorf("global should win after project removed: got %q", found.Name)
+	}
+	if found.Source != ModeSourceGlobal {
+		t.Errorf("source = %q, want global", found.Source)
+	}
+}
+
 func modeIDs(ms []Mode) []string {
 	out := make([]string, len(ms))
 	for i, m := range ms {

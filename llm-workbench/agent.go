@@ -38,6 +38,10 @@ type AgentContext struct {
 	ProjectID      string
 	EmbedProfileID string // empty when no embed profile is configured
 	Mode           Mode
+	// Params captured from the session at create-time, available to
+	// the mode's prompt template as `{{param.<key>}}`. Empty for ad-hoc
+	// chats that never went through NewSessionModal.
+	Params map[string]any
 
 	Files *FileService
 	RAG   *RAGService
