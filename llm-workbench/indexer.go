@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // IndexProgress is the synchronous result of a Walk + reindex pass.
@@ -34,11 +36,16 @@ type IndexProgress struct {
 type FileIndexer struct {
 	projects *ProjectService
 	indexes  *IndexRegistry
+	ctx      context.Context // optional, set via Attach for progress events
 }
 
 func NewFileIndexer(projects *ProjectService, indexes *IndexRegistry) *FileIndexer {
 	return &FileIndexer{projects: projects, indexes: indexes}
 }
+
+// Attach binds the Wails ctx so per-file progress can be streamed to the
+// frontend via `rag:index:progress:<projectID>` events.
+func (fx *FileIndexer) Attach(ctx context.Context) { fx.ctx = ctx }
 
 // Reindex scans the project root, chunks every matching file, and
 // upserts the result into chunks/chunks_fts. Per-file replace strategy:
@@ -123,6 +130,7 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 		}
 		prog.ChunksAdded += added
 		prog.ChunksRemoved += removed
+		fx.emitProgress(projectID, prog, rel)
 		return nil
 	})
 	if walkErr != nil {
@@ -138,7 +146,27 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 	prog.ChunksRemoved += removed
 
 	prog.DurationMs = time.Since(t0).Milliseconds()
+	fx.emitProgress(projectID, prog, "")
 	return prog, nil
+}
+
+// emitProgress fires a Wails event so the UI can render a live counter.
+// `currentPath` is the file currently being processed (empty when the
+// pass is finished). No-op if Attach hasn't been called.
+func (fx *FileIndexer) emitProgress(projectID string, prog IndexProgress, currentPath string) {
+	if fx.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(fx.ctx, "rag:index:progress:"+projectID, map[string]any{
+		"projectId":      projectID,
+		"filesProcessed": prog.FilesProcessed,
+		"filesSkipped":   prog.FilesSkipped,
+		"chunksAdded":    prog.ChunksAdded,
+		"chunksRemoved":  prog.ChunksRemoved,
+		"filesRemoved":   prog.FilesRemoved,
+		"currentPath":    currentPath,
+		"done":           currentPath == "",
+	})
 }
 
 // upsertFileChunks compares the new chunk set against what's stored for

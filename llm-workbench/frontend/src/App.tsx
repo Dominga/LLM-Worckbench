@@ -616,6 +616,7 @@ export default function App() {
           activeFilePath={activeFilePath}
           onSelectFile={onSelectFile}
           activeProjectName={activeProject?.Name}
+          activeProjectId={activeProject?.ID}
           sessions={sessions}
           activeSessionId={activeSessionId}
           onSelectSession={onSelectSession}

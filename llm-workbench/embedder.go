@@ -7,6 +7,7 @@ import (
 	"time"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // EmbeddingProgress is the synchronous summary of one embed pass.
@@ -29,6 +30,7 @@ type EmbeddingService struct {
 	profiles *ProfileManager
 	registry *ServerRegistry
 	indexes  *IndexRegistry
+	ctx      context.Context // optional; set via Attach for progress events
 
 	// BatchSize is the number of chunks per /v1/embeddings call. 16 fits
 	// comfortably under the default `-b 2048` token budget for 512-token
@@ -38,6 +40,10 @@ type EmbeddingService struct {
 	// the embed sidecar before giving up.
 	HealthWait time.Duration
 }
+
+// Attach binds the Wails ctx so batch progress can be streamed via
+// `rag:embed:progress:<projectID>` events.
+func (es *EmbeddingService) Attach(ctx context.Context) { es.ctx = ctx }
 
 func NewEmbeddingService(pm *ProfileManager, reg *ServerRegistry, idx *IndexRegistry) *EmbeddingService {
 	return &EmbeddingService{
@@ -115,21 +121,51 @@ func (es *EmbeddingService) BuildEmbeddings(ctx context.Context, projectID, embe
 	}
 	prog.ChunksEmbedded++
 	prog.BatchesSent++
+	prog.ChunksTotal = countChunks(idx)
+	es.emitProgress(projectID, prog, false)
 
 	// Stream remaining chunks in batches.
-	if err := es.streamPending(ctx, client, idx, &prog); err != nil {
+	if err := es.streamPending(ctx, client, idx, projectID, &prog); err != nil {
 		prog.Errors = append(prog.Errors, err.Error())
 	}
 
 	prog.DurationMs = time.Since(t0).Milliseconds()
+	es.emitProgress(projectID, prog, true)
 	return prog, nil
+}
+
+// countChunks reports the total number of chunks in the index. Used
+// for the progress denominator. Lightweight COUNT(*) — no scan.
+func countChunks(idx *IndexDB) int {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var n int
+	_ = idx.db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n)
+	return n
+}
+
+// emitProgress fires a Wails event so the UI can render a live
+// progress indicator while embeddings stream in.
+func (es *EmbeddingService) emitProgress(projectID string, prog EmbeddingProgress, done bool) {
+	if es.ctx == nil {
+		return
+	}
+	wruntime.EventsEmit(es.ctx, "rag:embed:progress:"+projectID, map[string]any{
+		"projectId":      projectID,
+		"chunksTotal":    prog.ChunksTotal,
+		"chunksEmbedded": prog.ChunksEmbedded,
+		"batchesSent":    prog.BatchesSent,
+		"embedDim":       prog.EmbedDim,
+		"embedModelId":   prog.EmbedModelID,
+		"done":           done,
+	})
 }
 
 // streamPending pulls batches of unembedded chunks until the queue
 // empties or an error occurs. Error from one batch is appended to the
 // progress and the loop continues — partial progress is preferable to
 // rolling back the whole pass.
-func (es *EmbeddingService) streamPending(ctx context.Context, client *EmbedClient, idx *IndexDB, prog *EmbeddingProgress) error {
+func (es *EmbeddingService) streamPending(ctx context.Context, client *EmbedClient, idx *IndexDB, projectID string, prog *EmbeddingProgress) error {
 	for {
 		batch, err := loadPendingChunks(idx, es.BatchSize)
 		if err != nil {
@@ -153,6 +189,7 @@ func (es *EmbeddingService) streamPending(ctx context.Context, client *EmbedClie
 		}
 		prog.ChunksEmbedded += len(batch)
 		prog.BatchesSent++
+		es.emitProgress(projectID, *prog, false)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

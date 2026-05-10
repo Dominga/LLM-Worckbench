@@ -68,9 +68,11 @@ func (a *App) startup(ctx context.Context) {
 		a.sessions = NewSessionService(prs)
 		a.indexes = NewIndexRegistry(prs)
 		a.indexer = NewFileIndexer(prs, a.indexes)
+		a.indexer.Attach(ctx)
 	}
 	if a.indexes != nil {
 		a.embedder = NewEmbeddingService(pm, a.registry, a.indexes)
+		a.embedder.Attach(ctx)
 		a.rag = NewRAGService(a.embedder, a.indexes)
 	}
 

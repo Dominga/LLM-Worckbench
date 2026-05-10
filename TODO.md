@@ -64,6 +64,13 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 ## Tech debt / nice-to-have
 
+### TD2 — Auto-reindex on file save
+
+Currently Reindex is manual via the `RagPanel` button. Hook the project polling tick
+or the WriteProjectFile flow to debounce-trigger a per-file reindex when a file changes.
+Probably enough to call `FileIndexer.Reindex` with a path filter once that exists, or
+just full reindex with a 5s debounce.
+
 ### TD1 — Copy-logs button still appears blocked in some states
 
 After B6 the disabled prop was removed and the click handler always runs (toast `"Logs empty"` on zero lines). User reports the button still feels blocked — possibly a CSS/render issue, possibly a CrashBanner overlay, possibly a stale `selectedLogs` closure. Not investigated. Defer until reproduced reliably.
@@ -116,8 +123,14 @@ DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlit
       Edit/Preview pane via new `App.onOpenFilePath` helper. Send button stays enabled while
       an unhealthy chat server prevents normal sends, so `/search` works without a chat profile up.
       No auto-context-injection — that lands in M3 with the agent loop.
-- [ ] **PR14** — Reindex job: explicit "Rebuild index" button + on-save trigger via existing 3s polling tick.
-      Progress event `rag:index:progress:<projectID>` with chunks_done / chunks_total.
+- [x] **PR14** — RAG controls panel + streaming progress events.
+      Backend: `FileIndexer.Attach(ctx)` + `EmbeddingService.Attach(ctx)` wire the Wails ctx so
+      Reindex emits `rag:index:progress:<projectID>` per file (with `currentPath` and a final
+      `done=true`) and BuildEmbeddings emits `rag:embed:progress:<projectID>` per batch.
+      UI: new `RagPanel` at the bottom of the Files segment in the sidebar — shows chunk
+      count + embed dim + model id, an embed-profile dropdown (running profiles first), and
+      Reindex/Embed buttons. Live counter while a pass is running. Toast on completion with
+      summary stats. Auto-on-save reindex deferred to a TD item.
 
 ### Open
 

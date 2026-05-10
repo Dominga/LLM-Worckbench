@@ -20,6 +20,7 @@ import {
   MODES,
 } from './types';
 import { FileTree } from './FileTree';
+import { RagPanel } from './RagPanel';
 
 export type SidebarProps = {
   segment: SidebarSegment;
@@ -37,6 +38,7 @@ export type SidebarProps = {
   activeFilePath: string;
   onSelectFile: (n: FileNode) => void;
   activeProjectName?: string;
+  activeProjectId?: string;
   sessions: Session[];
   activeSessionId: string;
   onSelectSession: (id: string) => void;
@@ -159,6 +161,9 @@ export function Sidebar(props: SidebarProps) {
             activeFilePath={props.activeFilePath}
             onSelectFile={props.onSelectFile}
             activeProjectName={props.activeProjectName}
+            activeProjectId={props.activeProjectId}
+            profiles={props.profiles}
+            statusByProfile={props.statusByProfile}
             query={query}
           />
         )}
@@ -362,12 +367,18 @@ function FilesPane({
   activeFilePath,
   onSelectFile,
   activeProjectName,
+  activeProjectId,
+  profiles,
+  statusByProfile,
   query,
 }: {
   tree: FileNode[];
   activeFilePath: string;
   onSelectFile: (n: FileNode) => void;
   activeProjectName?: string;
+  activeProjectId?: string;
+  profiles: Profile[];
+  statusByProfile: Record<string, InstanceStatus>;
   query: string;
 }) {
   if (!activeProjectName) {
@@ -381,6 +392,11 @@ function FilesPane({
         activePath={activeFilePath}
         onSelect={onSelectFile}
         filter={query}
+      />
+      <RagPanel
+        activeProjectId={activeProjectId}
+        profiles={profiles}
+        statusByProfile={statusByProfile}
       />
     </div>
   );
