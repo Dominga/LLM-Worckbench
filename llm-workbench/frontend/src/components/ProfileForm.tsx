@@ -54,6 +54,7 @@ type FormState = {
   ExtraArgsRaw: string;
   Autostart: boolean;
   HealthTimeoutSec: number;
+  ToolMode: '' | 'native' | 'react' | 'none';
   SamplingTemperature: number;
   SamplingTopP: number;
   SamplingMinP: number;
@@ -77,6 +78,7 @@ function emptyForm(): FormState {
     ExtraArgsRaw: '',
     Autostart: false,
     HealthTimeoutSec: 120,
+    ToolMode: '',
     SamplingTemperature: 0.7,
     SamplingTopP: 0.95,
     SamplingMinP: 0.05,
@@ -101,6 +103,7 @@ function fromProfile(p: Profile): FormState {
     ExtraArgsRaw: (p.ExtraArgs || []).join(' '),
     Autostart: p.Autostart || false,
     HealthTimeoutSec: p.HealthTimeoutSec || 120,
+    ToolMode: ((p as any).ToolMode || '') as FormState['ToolMode'],
     SamplingTemperature: p.Sampling?.Temperature ?? 0.7,
     SamplingTopP: p.Sampling?.TopP ?? 0.95,
     SamplingMinP: p.Sampling?.MinP ?? 0.05,
@@ -126,6 +129,7 @@ function toProfile(f: FormState): Profile {
     ExtraArgs: f.ExtraArgsRaw.split(/\s+/).map((s) => s.trim()).filter(Boolean),
     Autostart: f.Autostart,
     HealthTimeoutSec: f.HealthTimeoutSec,
+    ToolMode: f.ToolMode,
     Sampling: new main.Sampling({
       Temperature: f.SamplingTemperature,
       TopP: f.SamplingTopP,
@@ -383,6 +387,27 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
             mt={22}
           />
         </Group>
+
+        {form.Kind === 'chat' && (
+          <Select
+            label="Agent tool mode"
+            description={
+              "How the agent loop calls tools on this profile. " +
+              "Native = OpenAI tools[]/tool_calls (Qwen2/3, Hermes, etc. with --jinja). " +
+              "ReAct = text-prompted Action/Args lines (works with any chat model). " +
+              "None = disable tool calls regardless of session mode."
+            }
+            data={[
+              { value: '', label: 'auto (native)' },
+              { value: 'native', label: 'native (OpenAI tools[])' },
+              { value: 'react', label: 'ReAct (text fallback)' },
+              { value: 'none', label: 'none (no tools)' },
+            ]}
+            value={form.ToolMode}
+            onChange={(v) => update('ToolMode', (v ?? '') as FormState['ToolMode'])}
+            allowDeselect={false}
+          />
+        )}
 
         <Divider label="Sampling defaults" labelPosition="left" />
 

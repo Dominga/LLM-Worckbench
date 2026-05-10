@@ -199,6 +199,141 @@ func TestStreamWithToolsLoopsThroughToolThenFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestBuildReActPromptListsTools(t *testing.T) {
+	reg := NewToolRegistry()
+	RegisterBuiltinTools(reg)
+	tools := reg.Filter([]string{"read_file", "search_semantic"})
+	got := buildReActPrompt("You are a helpful agent.", tools)
+
+	for _, want := range []string{
+		"You are a helpful agent.",
+		"Action: <tool_name>",
+		"Args: <single-line JSON object>",
+		"Final Answer:",
+		"read_file",
+		"search_semantic",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ReAct prompt missing %q\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "edit_file") {
+		t.Errorf("filter leaked edit_file into prompt:\n%s", got)
+	}
+}
+
+func TestReActParserSkipsMidlineMentions(t *testing.T) {
+	// Mid-line mentions of "Action:" must NOT match; only line-anchored
+	// directives count. Picks the last line-anchored Action when many.
+	full := `I'm thinking about this.
+First I considered Action: list_files but rejected it.
+Action: read_file
+Args: {"path":"README.md"}
+`
+	actionMatches := reactActionRe.FindAllStringSubmatch(full, -1)
+	if len(actionMatches) != 1 {
+		t.Fatalf("expected 1 line-anchored Action, got %d", len(actionMatches))
+	}
+	if actionMatches[0][1] != "read_file" {
+		t.Errorf("matched = %q, want read_file", actionMatches[0][1])
+	}
+	argsMatches := reactArgsRe.FindAllStringSubmatch(full, -1)
+	if len(argsMatches) != 1 || !strings.Contains(argsMatches[0][1], "README.md") {
+		t.Errorf("args mismatch: %+v", argsMatches)
+	}
+}
+
+func TestReActParserPicksLastOfMany(t *testing.T) {
+	full := `Action: list_files
+Args: {}
+Action: read_file
+Args: {"path":"x.md"}
+`
+	actions := reactActionRe.FindAllStringSubmatch(full, -1)
+	args := reactArgsRe.FindAllStringSubmatch(full, -1)
+	if len(actions) != 2 || len(args) != 2 {
+		t.Fatalf("got actions=%d args=%d", len(actions), len(args))
+	}
+	if actions[len(actions)-1][1] != "read_file" {
+		t.Errorf("last action = %q, want read_file", actions[len(actions)-1][1])
+	}
+}
+
+func TestReActParserFinalAnswerStops(t *testing.T) {
+	full := "Final Answer: All done."
+	if reactFinalRe.FindStringSubmatch(full) == nil {
+		t.Fatal("Final Answer not detected")
+	}
+}
+
+// fakeReactServer alternates: chunk-1 emits an Action+Args, chunk-2
+// emits a Final Answer. Mirrors the streamWithTools mock but for the
+// text-prompted protocol.
+type fakeReactServer struct {
+	hits int32
+}
+
+func (f *fakeReactServer) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		n := atomic.AddInt32(&f.hits, 1)
+		stream := func(s string) {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", s)
+		}
+		end := "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+		if n == 1 {
+			stream("Looking it up.\n")
+			stream("Action: list_files\n")
+			stream("Args: {}\n")
+			fmt.Fprint(w, end)
+		} else {
+			stream("Final Answer: I see two files.")
+			fmt.Fprint(w, end)
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+}
+
+func TestStreamWithReActLoopsThroughActionThenFinalAnswer(t *testing.T) {
+	fake := &fakeReactServer{}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	reg := NewToolRegistry()
+	reg.Register(fakeListFilesTool{})
+
+	chat := &ChatService{}
+	mode := Mode{
+		ID:            "agent",
+		ToolWhitelist: []string{"list_files"},
+		SystemPrompt:  "You can use tools.",
+	}
+	res, err := chat.streamWithReAct(
+		context.Background(),
+		"test-react",
+		srv.URL,
+		[]ChatMessage{{Role: "user", Content: "list files"}},
+		mode,
+		reg,
+		&AgentContext{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.FinalContent, "Final Answer") {
+		t.Errorf("FinalContent missing Final Answer: %q", res.FinalContent)
+	}
+	if res.Iterations != 2 {
+		t.Errorf("Iterations = %d, want 2", res.Iterations)
+	}
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].Name != "list_files" {
+		t.Errorf("ToolCalls = %+v", res.ToolCalls)
+	}
+}
+
 func readAllSafe(r interface {
 	Read(p []byte) (n int, err error)
 }) ([]byte, error) {

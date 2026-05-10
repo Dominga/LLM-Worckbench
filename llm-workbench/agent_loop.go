@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -207,6 +208,168 @@ func (c *ChatService) streamWithTools(
 		}
 	}
 	return out, fmt.Errorf("agent loop hit %d-iteration cap without final answer", maxAgentIterations)
+}
+
+// ─────────────────────────── ReAct fallback ──────────────────────────
+
+// reactActionRe matches ` Action: <name>` followed (eventually) by
+// ` Args: <json>` on the next non-blank line(s). Tool names are
+// snake_case. Args may span multiple lines.
+//
+// Example expected emit:
+//
+//	I should look up the file first.
+//	Action: read_file
+//	Args: {"path": "README.md"}
+//
+// We deliberately keep the surface minimal — the prompt explains the
+// exact format the model should produce.
+var (
+	reactActionRe = regexp.MustCompile(`(?m)^Action:\s*([a-z_][a-z0-9_]*)\s*$`)
+	reactArgsRe   = regexp.MustCompile(`(?m)^Args:\s*(\{.*\})\s*$`)
+	reactFinalRe  = regexp.MustCompile(`(?m)^Final Answer:\s*(.*)$`)
+)
+
+// buildReActPrompt renders the system prompt for a ReAct-mode loop.
+// Lists allowed tools as a JSON-Schema block plus the strict
+// Action/Args/Observation format the parser understands.
+func buildReActPrompt(modePrompt string, tools []Tool) string {
+	var b strings.Builder
+	if strings.TrimSpace(modePrompt) != "" {
+		b.WriteString(modePrompt)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("You have access to the following tools. To call one, write exactly:\n\n")
+	b.WriteString("Action: <tool_name>\n")
+	b.WriteString("Args: <single-line JSON object>\n\n")
+	b.WriteString("Then STOP and wait. The system will run the tool and reply with:\n\n")
+	b.WriteString("Observation: <result>\n\n")
+	b.WriteString("Repeat the Action/Args/Observation cycle as needed. When you have the final reply for the user, write:\n\n")
+	b.WriteString("Final Answer: <your reply>\n\n")
+	b.WriteString("Tools:\n")
+	for _, t := range tools {
+		schema, _ := json.Marshal(t.InputSchema())
+		fmt.Fprintf(&b, "- %s: %s\n  args schema: %s\n", t.Name(), t.Description(), string(schema))
+	}
+	return b.String()
+}
+
+// streamWithReAct is the text-prompting equivalent of streamWithTools.
+// llama-server is asked to produce a normal completion (no tools[]
+// param); the loop scans the streamed text for `Action:` / `Args:`
+// blocks, runs the corresponding tool, appends an `Observation: …`
+// turn to the convo, and re-streams. Stops on `Final Answer:` or
+// when the model produces a turn without an Action.
+func (c *ChatService) streamWithReAct(
+	ctx context.Context,
+	streamID string,
+	baseURL string,
+	messages []ChatMessage,
+	mode Mode,
+	registry *ToolRegistry,
+	ac *AgentContext,
+) (AgentLoopResult, error) {
+	tools := registry.Filter(mode.ToolWhitelist)
+	out := AgentLoopResult{}
+
+	convo := []map[string]any{
+		{"role": "system", "content": buildReActPrompt(mode.SystemPrompt, tools)},
+	}
+	for _, m := range messages {
+		convo = append(convo, map[string]any{"role": m.Role, "content": m.Content})
+	}
+
+	for iter := 0; iter < maxAgentIterations; iter++ {
+		out.Iterations = iter + 1
+		body := map[string]any{
+			"messages": convo,
+			"stream":   true,
+			// Stop sequences keep the model from continuing past Args:
+			// into a hallucinated Observation. Some servers ignore stop
+			// outright, so we also detect Action+Args after the fact.
+			"stop": []string{"\nObservation:"},
+		}
+		buf, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			baseURL+"/v1/chat/completions", bytes.NewReader(buf))
+		if err != nil {
+			return out, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return out, err
+		}
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return out, fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
+		}
+		// Reuse the plain SSE drain — ReAct runs without tools[].
+		full, sErr := c.parseSSE(streamID, resp.Body)
+		resp.Body.Close()
+		if sErr != nil {
+			return out, sErr
+		}
+		out.FinalContent += full
+
+		// Final Answer line wins.
+		if m := reactFinalRe.FindStringSubmatch(full); m != nil {
+			return out, nil
+		}
+
+		// Look for an Action+Args pair. Use the LAST one in case the
+		// model thought aloud and mentioned other actions earlier.
+		actionMatches := reactActionRe.FindAllStringSubmatch(full, -1)
+		argsMatches := reactArgsRe.FindAllStringSubmatch(full, -1)
+		if len(actionMatches) == 0 || len(argsMatches) == 0 {
+			// No tool call → treat the whole text as the final answer.
+			return out, nil
+		}
+		name := actionMatches[len(actionMatches)-1][1]
+		argsRaw := argsMatches[len(argsMatches)-1][1]
+
+		rec := ToolCallRecord{
+			Name: name,
+			Args: json.RawMessage(argsRaw),
+		}
+		if c.ctx != nil {
+			wruntime.EventsEmit(c.ctx, "agent:tool:request:"+streamID, map[string]any{
+				"name": name,
+				"args": argsRaw,
+			})
+		}
+		result, runErr := registry.Invoke(ctx, ac, name, json.RawMessage(argsRaw))
+		if runErr != nil {
+			rec.Error = runErr.Error()
+		} else {
+			rec.Result = result
+		}
+		out.ToolCalls = append(out.ToolCalls, rec)
+		if c.ctx != nil {
+			wruntime.EventsEmit(c.ctx, "agent:tool:result:"+streamID, map[string]any{
+				"name":   name,
+				"error":  rec.Error,
+				"result": rec.Result,
+			})
+		}
+
+		// Append the assistant turn (whatever the model said, including
+		// the Action/Args lines) so the model sees its own request, then
+		// add the Observation as a `user` turn — most non-OpenAI
+		// servers don't support a `tool` role in plain chat templates.
+		convo = append(convo, map[string]any{"role": "assistant", "content": full})
+		var obs string
+		if runErr != nil {
+			obs = fmt.Sprintf("Observation: error: %v", runErr)
+		} else {
+			resJSON, _ := json.Marshal(result)
+			obs = "Observation: " + string(resJSON)
+		}
+		convo = append(convo, map[string]any{"role": "user", "content": obs})
+	}
+	return out, fmt.Errorf("react loop hit %d-iteration cap without Final Answer", maxAgentIterations)
 }
 
 // buildToolSchemas converts ToolRegistry entries into the

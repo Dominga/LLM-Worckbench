@@ -71,6 +71,15 @@ type Profile struct {
 	Sampling    Sampling    `toml:"sampling"`
 	Autostart   bool        `toml:"autostart,omitempty"`
 	HealthTimeoutSec int    `toml:"health_timeout_sec,omitempty"`
+	// ToolMode controls how the agent loop talks to this profile. Values:
+	//   ""        — defaults to "native" (M3 PR17 path).
+	//   "native"  — OpenAI-style tools[] / tool_choice / tool_calls.
+	//   "react"   — text-prompted ReAct: tools listed in the system
+	//               prompt, model emits `Action:` / `Args:` lines, the
+	//               parser intercepts them from the stream (PR18).
+	//   "none"    — never inject tools regardless of mode whitelist;
+	//               useful for fine-tunes that ignore both protocols.
+	ToolMode    string      `toml:"tool_mode,omitempty"`
 	CreatedAt   time.Time   `toml:"created_at"`
 	UpdatedAt   time.Time   `toml:"updated_at"`
 }

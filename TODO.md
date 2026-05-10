@@ -126,11 +126,20 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       whitelist-driven schema build, mock end-to-end loop (stub server returns
       tool_call → final answer; verifies request bodies don't carry tool_call_id
       on iter 1, do on iter 2).
-- [ ] **PR18** — ReAct fallback. System-prompt template enumerates tools as a JSON
-      schema block. Stream accumulator intercepts `Action:` / `Args:` lines, runs
-      the tool, injects result as a synthetic assistant turn (`Observation: …`),
-      continues the loop until the model emits a final answer or hits the
-      iteration cap (default 8).
+- [x] **PR18** — ReAct fallback. `ChatService.streamWithReAct` builds a system
+      prompt enumerating allowed tools (name, description, JSON-Schema args), uses
+      the plain SSE drain (no `tools[]`), and parses `Action:` / `Args:` lines
+      anchored at line start (mid-line mentions skipped). Tool result is appended
+      as a synthetic `Observation: <json>` user turn so non-OpenAI chat templates
+      that don't support a `tool` role still work. `Final Answer: …` ends the
+      loop. Same 8-iteration cap as the native path. New `Profile.ToolMode`
+      string field (`""|"native"|"react"|"none"`) selects the wire protocol per
+      profile, plus a Select in `ProfileForm` (chat-kind only). ChatService
+      branches on it: `react` → `streamWithReAct`, `none` → plain stream
+      regardless of session mode, anything else → `streamWithTools`. Tests:
+      prompt builder includes tools and skips filtered ones, regex skips
+      mid-line "Action:" mentions, picks the last action when many, end-to-end
+      mock with action turn → final-answer turn.
 - [ ] **PR19** — Approval-gate UI. `ToolCallApproval` modal with old-vs-new diff
       for `edit_file` (CodeMirror diff view). Per-mode `[approval]` policy
       enforced server-side: `always` blocks until UI confirms, `snapshot` skips
@@ -155,6 +164,47 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
   cancels stream; we'll need to also cancel an in-flight tool handler).
 
 ## Tech debt / nice-to-have
+
+### TD10 — Visualise model thinking / long-running activity
+
+When the model "thinks" silently (Qwen3 emits `<think>…</think>` blocks before
+the visible reply, or the agent loop runs a tool call that takes a few seconds),
+the chat looks frozen. No spinner, no token counter, no indication that anything
+is happening.
+
+**Fix ideas (review V1–V4 mockups in `Design/` for reference):**
+- Inline "thinking" bubble — render `<think>` content collapsed, expandable
+  on click. Strip it from the final assistant message in the saved JSONL or
+  store it under a separate `reasoning_content` field.
+- Activity strip below the bubble: "🔧 read_file(path=README.md)…" updates
+  via the existing `agent:tool:request/result:<streamId>` events. Live tool
+  call counter while the loop iterates.
+- Token-throughput pill (we already track per-profile TPS in the supervisor —
+  surface it here while a stream is in flight).
+- Pulse / shimmer on the empty assistant bubble until the first delta
+  arrives, so first-token latency feels intentional rather than hung.
+
+**Files:** `frontend/src/tabs/ChatTab.tsx` (bubble + activity strip),
+`render.go` if we need a `<think>`-stripping pass.
+
+### TD9 — Chat bubbles must render markdown
+
+Assistant messages currently render as plain text in the chat panel — fenced code,
+emoji, lists, bold/italic, links all show as raw `**`, ` ``` `, etc. Backend already
+has a `Renderer` (`render.go`) that produces sanitized HTML (used by the file Preview
+pane); reuse it for chat too.
+
+**Fix:**
+- ChatTab message list: pipe `assistant` content through `RenderMarkdown` (existing
+  binding) into the bubble's HTML; for streaming deltas re-render on each delta tick
+  (debounce ~50 ms) or render on `chat:done`.
+- Keep `user` bubbles as plain text (we send what the user typed verbatim).
+- Tool-call chips (PR21) should still overlay the rendered HTML, not get stripped.
+- Safety: existing renderer already runs through bluemonday; don't add raw-HTML
+  passthrough.
+
+**Files:** `frontend/src/tabs/ChatTab.tsx` (message renderer), maybe extract a tiny
+`MarkdownBubble` helper.
 
 ### TD8 — /search hit click should scroll to the chunk
 

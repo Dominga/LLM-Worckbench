@@ -148,20 +148,28 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 
 	// Decide path: if the session's mode has tools enabled and the
 	// agent-loop deps are wired, run the tool-using loop. Otherwise
-	// fall back to the plain SSE stream.
+	// fall back to the plain SSE stream. The profile's ToolMode picks
+	// the wire protocol (native function calling vs ReAct text).
 	useAgent := false
 	var resolved Mode
 	if c.modes != nil && c.tools != nil && c.agentX != nil {
 		resolved = c.modes.Resolve(projectID, sess.ModeID)
-		if len(resolved.ToolWhitelist) != 0 {
-			// nil = "all tools" (also a tool-using mode); empty []
-			// explicitly means chat-only.
+		if len(resolved.ToolWhitelist) != 0 || resolved.ToolWhitelist == nil {
 			useAgent = true
-		} else if resolved.ToolWhitelist == nil {
-			// Belt-and-braces: a project-local override that drops the
-			// whitelist field defaults to "all tools" via normalise()'s
-			// rules — treat as agent.
-			useAgent = true
+		}
+	}
+	// Profile ToolMode of "none" overrides the mode and forces plain chat.
+	wireMode := "native"
+	if c.pm != nil {
+		if p, gErr := c.pm.Get(sess.ProfileID); gErr == nil {
+			switch strings.ToLower(strings.TrimSpace(p.ToolMode)) {
+			case "react":
+				wireMode = "react"
+			case "none":
+				useAgent = false
+			case "", "native":
+				wireMode = "native"
+			}
 		}
 	}
 
@@ -175,7 +183,13 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			ac := c.agentX(projectID)
 			ac.ProjectID = projectID
 			ac.Mode = resolved
-			res, e := c.streamWithTools(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+			var res AgentLoopResult
+			var e error
+			if wireMode == "react" {
+				res, e = c.streamWithReAct(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+			} else {
+				res, e = c.streamWithTools(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+			}
 			fullContent = res.FinalContent
 			toolCalls = res.ToolCalls
 			err = e

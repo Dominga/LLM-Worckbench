@@ -375,6 +375,7 @@ export namespace main {
 	    Sampling: Sampling;
 	    Autostart: boolean;
 	    HealthTimeoutSec: number;
+	    ToolMode: string;
 	    // Go type: time
 	    CreatedAt: any;
 	    // Go type: time
@@ -402,6 +403,7 @@ export namespace main {
 	        this.Sampling = this.convertValues(source["Sampling"], Sampling);
 	        this.Autostart = source["Autostart"];
 	        this.HealthTimeoutSec = source["HealthTimeoutSec"];
+	        this.ToolMode = source["ToolMode"];
 	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
 	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
 	    }
