@@ -19,8 +19,9 @@ type App struct {
 	projects *ProjectService
 	files    *FileService
 	sessions *SessionService
-	indexes  *IndexRegistry
-	indexer  *FileIndexer
+	indexes   *IndexRegistry
+	indexer   *FileIndexer
+	embedder  *EmbeddingService
 }
 
 func NewApp() *App {
@@ -66,6 +67,9 @@ func (a *App) startup(ctx context.Context) {
 		a.sessions = NewSessionService(prs)
 		a.indexes = NewIndexRegistry(prs)
 		a.indexer = NewFileIndexer(prs, a.indexes)
+	}
+	if a.indexes != nil {
+		a.embedder = NewEmbeddingService(pm, a.registry, a.indexes)
 	}
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
@@ -113,6 +117,17 @@ func (a *App) RebuildIndex(projectID string) (IndexProgress, error) {
 		return IndexProgress{}, fmt.Errorf("indexer not available")
 	}
 	return a.indexer.Reindex(projectID)
+}
+
+// BuildEmbeddings runs the embedding pass for the given project,
+// using the named embed-kind profile. Auto-starts the profile if it
+// is not running. Idempotent: only chunks without an existing vector
+// are sent to the embed server.
+func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgress, error) {
+	if a.embedder == nil {
+		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
+	}
+	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
 }
 
 // ──────────────────────────── Config ────────────────────────────────

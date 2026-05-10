@@ -14,6 +14,30 @@ export namespace main {
 	        this.content = source["content"];
 	    }
 	}
+	export class EmbeddingProgress {
+	    chunksTotal: number;
+	    chunksEmbedded: number;
+	    batchesSent: number;
+	    embedDim: number;
+	    embedModelId: string;
+	    durationMs: number;
+	    errors?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new EmbeddingProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chunksTotal = source["chunksTotal"];
+	        this.chunksEmbedded = source["chunksEmbedded"];
+	        this.batchesSent = source["batchesSent"];
+	        this.embedDim = source["embedDim"];
+	        this.embedModelId = source["embedModelId"];
+	        this.durationMs = source["durationMs"];
+	        this.errors = source["errors"];
+	    }
+	}
 	export class FileContent {
 	    path: string;
 	    bytes: number;

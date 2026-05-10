@@ -91,8 +91,15 @@ DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlit
       single para, multi-para overlap, oversize hard-split, SHA determinism, glob include/exclude,
       end-to-end reindex (idempotent → mutate → delete → FTS5 search).
       App binding `RebuildIndex(projectID)` returns `IndexProgress` (no streaming yet — PR14).
-- [ ] **PR11** — `EmbedClient` POSTs to llama-server `/v1/embeddings` (kind=embed profile).
-      Batched writes to `vec_chunks`. Auto-start linked embed sidecar before indexing if not running.
+- [x] **PR11** — `EmbedClient` POSTs to llama-server `/v1/embeddings` (OpenAI-compatible, reorders
+      response items by `index`). `EmbeddingService.BuildEmbeddings(projectID, embedProfileID)`:
+      auto-starts the embed-kind profile, polls health, probes one chunk to discover the model's
+      vector dimension, calls `EnsureVecTable(modelID, dim)`, then streams remaining unembedded
+      chunks in batches of 16, INSERTing serialized float32 BLOBs into `vec_chunks` keyed by
+      `chunks.id`. Per-file replace and GC paths (PR10) now clean `vec_chunks` rows when
+      chunks they reference are deleted. App binding `BuildEmbeddings(projectID, embedProfileID)`.
+      Tests: embed-client mock (reorder, empty input, HTTP error), pending-chunks scan with/without
+      vec table, write+rescan idempotency, dim-change rejection.
 - [ ] **PR12** — Hybrid retrieval: dense (`SELECT ... FROM vec_chunks ORDER BY vec_distance_cosine`)
       + BM25 (`SELECT ... FROM chunks_fts WHERE chunks_fts MATCH ?`). RRF combiner.
       `RAGService.Search(projectID, query, k)` returns ranked `[]ChunkHit`.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -189,6 +190,23 @@ func upsertFileChunks(idx *IndexDB, path string, mtime int64, newChunks []Chunk)
 		return 0, 0, err
 	}
 	if len(olds) > 0 {
+		// vec_chunks rows are keyed by chunks.id (rowid). Delete them
+		// first so we don't orphan vectors when a file mutates. Skipped
+		// if vec_chunks doesn't exist yet (PR9 schema, pre-PR11 wiring).
+		if vecTableExistsTx(tx) {
+			ids := make([]any, len(olds))
+			for i, r := range olds {
+				ids[i] = r.id
+			}
+			placeholders := strings.Repeat("?,", len(ids))
+			placeholders = placeholders[:len(placeholders)-1]
+			if _, vErr := tx.Exec(
+				`DELETE FROM vec_chunks WHERE rowid IN (`+placeholders+`)`, ids...,
+			); vErr != nil {
+				_ = tx.Rollback()
+				return 0, 0, fmt.Errorf("vec gc: %w", vErr)
+			}
+		}
 		res, dErr := tx.Exec(`DELETE FROM chunks WHERE path = ?`, path)
 		if dErr != nil {
 			_ = tx.Rollback()
@@ -250,7 +268,16 @@ func gcMissingPaths(idx *IndexDB, walked map[string]struct{}) (int, int, error) 
 		return 0, 0, err
 	}
 	totalRemoved := 0
+	hasVec := vecTableExistsTx(tx)
 	for _, p := range stale {
+		if hasVec {
+			if _, vErr := tx.Exec(
+				`DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)`, p,
+			); vErr != nil {
+				_ = tx.Rollback()
+				return 0, 0, fmt.Errorf("vec gc: %w", vErr)
+			}
+		}
 		res, dErr := tx.Exec(`DELETE FROM chunks WHERE path = ?`, p)
 		if dErr != nil {
 			_ = tx.Rollback()
@@ -263,6 +290,16 @@ func gcMissingPaths(idx *IndexDB, walked map[string]struct{}) (int, int, error) 
 		return 0, 0, cErr
 	}
 	return len(stale), totalRemoved, nil
+}
+
+// vecTableExistsTx returns true when `vec_chunks` is registered.
+// sqlite-vec virtual tables show up in sqlite_master with type='table'.
+func vecTableExistsTx(tx *sql.Tx) bool {
+	var name string
+	err := tx.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='vec_chunks'`,
+	).Scan(&name)
+	return err == nil && name == "vec_chunks"
 }
 
 // readIndexingConfig reads <root>/project.toml. Missing or empty
