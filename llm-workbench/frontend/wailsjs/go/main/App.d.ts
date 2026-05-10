@@ -68,6 +68,8 @@ export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;
 
 export function RestartProfile(arg1:string):Promise<void>;
 
+export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<Array<main.ChunkHit>>;
+
 export function ServerStatus():Promise<main.Status>;
 
 export function SessionChatStream(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.StreamHandle>;

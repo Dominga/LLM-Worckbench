@@ -22,6 +22,7 @@ type App struct {
 	indexes   *IndexRegistry
 	indexer   *FileIndexer
 	embedder  *EmbeddingService
+	rag       *RAGService
 }
 
 func NewApp() *App {
@@ -70,6 +71,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if a.indexes != nil {
 		a.embedder = NewEmbeddingService(pm, a.registry, a.indexes)
+		a.rag = NewRAGService(a.embedder, a.indexes)
 	}
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
@@ -128,6 +130,18 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
 	}
 	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
+}
+
+// SearchProject runs hybrid (dense + BM25, fused via RRF) retrieval
+// over the project's index. embedProfileID may be empty when sparseOnly
+// is true. k is the number of hits to return; pass 0 for the default 8.
+func (a *App) SearchProject(projectID, embedProfileID, query string, k int, sparseOnly, denseOnly bool) ([]ChunkHit, error) {
+	if a.rag == nil {
+		return nil, fmt.Errorf("rag not available")
+	}
+	return a.rag.Search(a.ctx, projectID, embedProfileID, query, SearchOptions{
+		K: k, SparseOnly: sparseOnly, DenseOnly: denseOnly,
+	})
 }
 
 // ──────────────────────────── Config ────────────────────────────────

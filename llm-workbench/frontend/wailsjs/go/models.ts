@@ -14,6 +14,36 @@ export namespace main {
 	        this.content = source["content"];
 	    }
 	}
+	export class ChunkHit {
+	    chunkId: number;
+	    path: string;
+	    startByte: number;
+	    endByte: number;
+	    content: string;
+	    score: number;
+	    denseRank: number;
+	    sparseRank: number;
+	    denseDist?: number;
+	    sparseBm25?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChunkHit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chunkId = source["chunkId"];
+	        this.path = source["path"];
+	        this.startByte = source["startByte"];
+	        this.endByte = source["endByte"];
+	        this.content = source["content"];
+	        this.score = source["score"];
+	        this.denseRank = source["denseRank"];
+	        this.sparseRank = source["sparseRank"];
+	        this.denseDist = source["denseDist"];
+	        this.sparseBm25 = source["sparseBm25"];
+	    }
+	}
 	export class EmbeddingProgress {
 	    chunksTotal: number;
 	    chunksEmbedded: number;

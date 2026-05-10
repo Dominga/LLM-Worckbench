@@ -134,6 +134,10 @@ export function RestartProfile(arg1) {
   return window['go']['main']['App']['RestartProfile'](arg1);
 }
 
+export function SearchProject(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SearchProject'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function ServerStatus() {
   return window['go']['main']['App']['ServerStatus']();
 }

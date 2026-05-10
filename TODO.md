@@ -100,9 +100,14 @@ DESIGN.md §5.4 + §9 M2. SQLite driver: **mattn/go-sqlite3** (CGo, easier sqlit
       chunks they reference are deleted. App binding `BuildEmbeddings(projectID, embedProfileID)`.
       Tests: embed-client mock (reorder, empty input, HTTP error), pending-chunks scan with/without
       vec table, write+rescan idempotency, dim-change rejection.
-- [ ] **PR12** — Hybrid retrieval: dense (`SELECT ... FROM vec_chunks ORDER BY vec_distance_cosine`)
-      + BM25 (`SELECT ... FROM chunks_fts WHERE chunks_fts MATCH ?`). RRF combiner.
-      `RAGService.Search(projectID, query, k)` returns ranked `[]ChunkHit`.
+- [x] **PR12** — `RAGService.Search(ctx, projectID, embedProfileID, query, opts)` runs hybrid
+      retrieval: embed query via `EmbedClient` → top-N dense KNN over `vec_chunks` (sqlite-vec
+      MATCH + k=N), top-N BM25 over `chunks_fts`. Reciprocal Rank Fusion (default k=60) merges
+      the two rank maps. Stable tie-break by id ascending. `ChunkHit` includes per-ranker
+      sub-scores for diagnostics. `SearchOptions.SparseOnly` / `DenseOnly` toggles allow
+      skipping either ranker (e.g. when no embed profile is configured yet).
+      App binding `SearchProject(projectID, embedProfileID, query, k, sparseOnly, denseOnly)`.
+      Tests: RRF math, top-K tie-break, sparse-only end-to-end, embed-required-for-dense guard.
 - [ ] **PR13** — `/search …` slash-command parsed in chat input → results panel inline (chips with file + start–end).
       No automatic context-injection yet (that lands in M3 with the agent loop).
 - [ ] **PR14** — Reindex job: explicit "Rebuild index" button + on-save trigger via existing 3s polling tick.
