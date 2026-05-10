@@ -25,6 +25,7 @@ type App struct {
 	rag       *RAGService
 	tools     *ToolRegistry
 	modes     *ModeService
+	approvals *ApprovalManager
 }
 
 func NewApp() *App {
@@ -80,6 +81,7 @@ func (a *App) startup(ctx context.Context) {
 	a.tools = NewToolRegistry()
 	RegisterBuiltinTools(a.tools)
 	a.modes = NewModeService(a.projects)
+	a.approvals = NewApprovalManager()
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)
@@ -88,7 +90,7 @@ func (a *App) startup(ctx context.Context) {
 	// Hook the agent loop into ChatService so sessions whose mode has
 	// a tool whitelist run through the multi-turn tool loop. Must
 	// happen after NewChatService so the receiver isn't nil.
-	a.chat.AttachAgent(a.tools, a.modes, func(projectID string) *AgentContext {
+	a.chat.AttachAgent(a.tools, a.modes, a.approvals, func(projectID string) *AgentContext {
 		var embedID string
 		// Auto-pick the first running embed profile for context.
 		if a.registry != nil && a.profiles != nil {
@@ -159,6 +161,17 @@ func (a *App) BuildEmbeddings(projectID, embedProfileID string) (EmbeddingProgre
 		return EmbeddingProgress{}, fmt.Errorf("embedder not available")
 	}
 	return a.embedder.BuildEmbeddings(a.ctx, projectID, embedProfileID)
+}
+
+// RespondToApproval delivers the user's accept/reject decision for a
+// pending write-tool call. The agent loop is blocking on this — until
+// it lands, the run sits in a select waiting on the approval channel
+// or the stream ctx.
+func (a *App) RespondToApproval(approvalID string, accept bool, reason string) error {
+	if a.approvals == nil {
+		return fmt.Errorf("approvals not available")
+	}
+	return a.approvals.Respond(approvalID, ApprovalDecision{Accept: accept, Reason: reason})
 }
 
 // SearchProject runs hybrid (dense + BM25, fused via RRF) retrieval

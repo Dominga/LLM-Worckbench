@@ -140,10 +140,21 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       prompt builder includes tools and skips filtered ones, regex skips
       mid-line "Action:" mentions, picks the last action when many, end-to-end
       mock with action turn → final-answer turn.
-- [ ] **PR19** — Approval-gate UI. `ToolCallApproval` modal with old-vs-new diff
-      for `edit_file` (CodeMirror diff view). Per-mode `[approval]` policy
-      enforced server-side: `always` blocks until UI confirms, `snapshot` skips
-      modal but logs the call, `auto` is read-only-only.
+- [x] **PR19** — Approval gate. Backend `ApprovalManager` opens a fresh
+      `(id, chan)` per pending write call; agent loop emits
+      `agent:approval:request:<streamId>` AND a global `agent:approval:request`
+      event with `{id, streamId, tool, args, path, oldContent, newContent}` and
+      blocks on the channel. Frontend `ApprovalModal` subscribes to the global
+      channel, shows side-by-side old/new for `edit_file` (raw args for other
+      writes), captures an optional reject reason, calls
+      `App.RespondToApproval(id, accept, reason)`. Policy enforced:
+      `auto` skips the gate (and is rejected at mode-validate time when
+      combined with any write tool); `snapshot` proceeds (PR20 owns the git
+      side); `always` blocks until decision. Fails closed: `always` mode with
+      no `ApprovalManager` wired returns an error rather than letting writes
+      slip through. Tests: manager roundtrip, double-respond is an error,
+      cancel closes channel, read tools bypass gate, accept proceeds, reject
+      surfaces as error, snapshot bypass, fail-closed without manager.
 - [ ] **PR20** — Pre-agent snapshots. When `approval = "snapshot"`, the agent loop
       runs `git add -A && git commit --allow-empty -m "agent: snapshot before
       <mode> @ <ts>"` at start. App binding `RevertLastAgentSnapshot(projectID)`

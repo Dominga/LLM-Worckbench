@@ -29,9 +29,10 @@ type ChatService struct {
 	// Optional agent-loop deps. When non-nil and the active mode has a
 	// non-empty ToolWhitelist, StartSessionStream routes through the
 	// tool-using loop instead of the plain SSE drain.
-	tools  *ToolRegistry
-	modes  *ModeService
-	agentX func(projectID string) *AgentContext // builds AgentContext on demand
+	tools     *ToolRegistry
+	modes     *ModeService
+	approvals *ApprovalManager
+	agentX    func(projectID string) *AgentContext // builds AgentContext on demand
 
 	ctx context.Context
 
@@ -51,9 +52,10 @@ func NewChatService(registry *ServerRegistry, pm *ProfileManager, sessions *Sess
 // AttachAgent wires the optional agent-loop dependencies. Safe to call
 // after NewChatService — keeps the constructor signature stable while
 // M3 services come online.
-func (c *ChatService) AttachAgent(tools *ToolRegistry, modes *ModeService, agentX func(projectID string) *AgentContext) {
+func (c *ChatService) AttachAgent(tools *ToolRegistry, modes *ModeService, approvals *ApprovalManager, agentX func(projectID string) *AgentContext) {
 	c.tools = tools
 	c.modes = modes
+	c.approvals = approvals
 	c.agentX = agentX
 }
 

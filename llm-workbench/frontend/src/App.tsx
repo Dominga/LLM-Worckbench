@@ -48,6 +48,7 @@ import {
 import { ProfileForm } from './components/ProfileForm';
 import { NewSessionModal } from './components/NewSessionModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { ApprovalModal } from './components/ApprovalModal';
 import { V5 } from './theme';
 
 const LOG_RING_SIZE = 1000;
@@ -684,6 +685,8 @@ export default function App() {
         confirmLabel={confirm?.confirmLabel}
         variant="danger"
       />
+
+      <ApprovalModal />
     </div>
   );
 }

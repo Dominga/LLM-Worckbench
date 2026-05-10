@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -167,14 +169,21 @@ func (c *ChatService) streamWithTools(
 		// Dispatch each tool call and append a `tool` message with the
 		// JSON-encoded result.
 		for _, tc := range calls {
-			rec := ToolCallRecord{Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
+			rawArgs := json.RawMessage(tc.Function.Arguments)
+			rec := ToolCallRecord{Name: tc.Function.Name, Args: rawArgs}
 			if c.ctx != nil {
 				wruntime.EventsEmit(c.ctx, "agent:tool:request:"+streamID, map[string]any{
 					"name": tc.Function.Name,
 					"args": tc.Function.Arguments,
 				})
 			}
-			result, runErr := registry.Invoke(ctx, ac, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
+			var result any
+			var runErr error
+			if appErr := c.requestApprovalIfWrite(ctx, streamID, mode, ac, tc.Function.Name, rawArgs); appErr != nil {
+				runErr = appErr
+			} else {
+				result, runErr = registry.Invoke(ctx, ac, tc.Function.Name, rawArgs)
+			}
 			if runErr != nil {
 				rec.Error = runErr.Error()
 			} else {
@@ -330,9 +339,10 @@ func (c *ChatService) streamWithReAct(
 		name := actionMatches[len(actionMatches)-1][1]
 		argsRaw := argsMatches[len(argsMatches)-1][1]
 
+		rawArgs := json.RawMessage(argsRaw)
 		rec := ToolCallRecord{
 			Name: name,
-			Args: json.RawMessage(argsRaw),
+			Args: rawArgs,
 		}
 		if c.ctx != nil {
 			wruntime.EventsEmit(c.ctx, "agent:tool:request:"+streamID, map[string]any{
@@ -340,7 +350,13 @@ func (c *ChatService) streamWithReAct(
 				"args": argsRaw,
 			})
 		}
-		result, runErr := registry.Invoke(ctx, ac, name, json.RawMessage(argsRaw))
+		var result any
+		var runErr error
+		if appErr := c.requestApprovalIfWrite(ctx, streamID, mode, ac, name, rawArgs); appErr != nil {
+			runErr = appErr
+		} else {
+			result, runErr = registry.Invoke(ctx, ac, name, rawArgs)
+		}
 		if runErr != nil {
 			rec.Error = runErr.Error()
 		} else {
@@ -370,6 +386,83 @@ func (c *ChatService) streamWithReAct(
 		convo = append(convo, map[string]any{"role": "user", "content": obs})
 	}
 	return out, fmt.Errorf("react loop hit %d-iteration cap without Final Answer", maxAgentIterations)
+}
+
+// requestApprovalIfWrite checks the active mode's policy and, when
+// `always`, blocks until the user accepts or rejects the call via the
+// UI. Returns nil (proceed), a reject reason, or an error if the
+// approval channel was cancelled.
+//
+// `auto` is rejected at validate-time when combined with a write tool;
+// `snapshot` proceeds without UI gate (PR20 owns the git-snapshot
+// side). `always` opens an ApprovalRequest and waits.
+func (c *ChatService) requestApprovalIfWrite(
+	ctx context.Context,
+	streamID string,
+	mode Mode,
+	ac *AgentContext,
+	toolName string,
+	rawArgs json.RawMessage,
+) error {
+	if !IsWriteTool(toolName) {
+		return nil
+	}
+	if mode.Approval != ApprovalAlways {
+		return nil
+	}
+	if c.approvals == nil {
+		// No manager wired → fail closed: better to reject than
+		// silently let writes through under approval=always.
+		return errors.New("approval manager not wired")
+	}
+	id, ch := c.approvals.Open()
+	req := ApprovalRequest{
+		ID:        id,
+		StreamID:  streamID,
+		Tool:      toolName,
+		Args:      rawArgs,
+		CreatedAt: time.Now().UTC(),
+	}
+	// edit_file convenience: pre-fill Path, OldContent, NewContent so
+	// the UI doesn't need a second roundtrip to render the diff.
+	if toolName == "edit_file" && ac != nil && ac.Files != nil {
+		var args struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if uErr := json.Unmarshal(rawArgs, &args); uErr == nil {
+			req.Path = args.Path
+			req.NewContent = args.Content
+			if fc, rErr := ac.Files.ReadFile(ac.ProjectID, args.Path); rErr == nil {
+				req.OldContent = fc.Content
+			}
+		}
+	}
+	if c.ctx != nil {
+		// Per-stream channel for callers that already filter by streamId.
+		wruntime.EventsEmit(c.ctx, "agent:approval:request:"+streamID, req)
+		// Global channel so a single top-level Modal subscription works
+		// without re-binding on every new stream.
+		wruntime.EventsEmit(c.ctx, "agent:approval:request", req)
+	}
+
+	select {
+	case <-ctx.Done():
+		c.approvals.Cancel(id)
+		return ctx.Err()
+	case dec, ok := <-ch:
+		if !ok {
+			return errors.New("approval cancelled")
+		}
+		if !dec.Accept {
+			reason := dec.Reason
+			if reason == "" {
+				reason = "user rejected the change"
+			}
+			return fmt.Errorf("approval rejected: %s", reason)
+		}
+		return nil
+	}
 }
 
 // buildToolSchemas converts ToolRegistry entries into the

@@ -66,6 +66,8 @@ export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<main.
 
 export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;
 
+export function RespondToApproval(arg1:string,arg2:boolean,arg3:string):Promise<void>;
+
 export function RestartProfile(arg1:string):Promise<void>;
 
 export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<Array<main.ChunkHit>>;
