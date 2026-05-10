@@ -447,6 +447,16 @@ func (a *App) GetSession(projectID, sessionID string) (Session, error) {
 	return a.sessions.Get(projectID, sessionID)
 }
 
+// CreateSessionWithParams is the M4 PR26 variant that captures the
+// values entered into the NewSessionModal's parameter form. Empty
+// params is equivalent to the legacy CreateSession.
+func (a *App) CreateSessionWithParams(projectID, title, modeID, profileID string, params map[string]any) (Session, error) {
+	if a.sessions == nil {
+		return Session{}, fmt.Errorf("session service unavailable")
+	}
+	return a.sessions.CreateWithParams(projectID, title, modeID, profileID, params)
+}
+
 func (a *App) CreateSession(projectID, title, modeID, profileID string) (Session, error) {
 	if a.sessions == nil {
 		return Session{}, fmt.Errorf("session service not initialized")

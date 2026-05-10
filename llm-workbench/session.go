@@ -30,6 +30,12 @@ type Session struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	MessageCount int    `json:"messageCount"`
+	// Params holds the values captured at session creation for the
+	// mode's declared ModeParams. The agent loop feeds them into
+	// `{{param.<name>}}` placeholders when rendering the prompt
+	// template. nil when the mode declared no params or for legacy
+	// sessions saved before PR26.
+	Params map[string]any `json:"params,omitempty"`
 }
 
 // SessionMessage is one persisted line of the conversation. Use
@@ -48,14 +54,15 @@ type SessionMessage struct {
 
 // sessionHeader is line 1 of every session file.
 type sessionHeader struct {
-	V         int       `json:"v"`
-	SessionID string    `json:"sessionId"`
-	ProjectID string    `json:"projectId"`
-	Title     string    `json:"title"`
-	ModeID    string    `json:"modeId"`
-	ProfileID string    `json:"profileId"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	V         int            `json:"v"`
+	SessionID string         `json:"sessionId"`
+	ProjectID string         `json:"projectId"`
+	Title     string         `json:"title"`
+	ModeID    string         `json:"modeId"`
+	ProfileID string         `json:"profileId"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	Params    map[string]any `json:"params,omitempty"`
 }
 
 // SessionService owns session bookkeeping for the active project. It is
@@ -153,6 +160,7 @@ func (s *SessionService) readMeta(path string) (Session, error) {
 		CreatedAt:    h.CreatedAt,
 		UpdatedAt:    h.UpdatedAt,
 		MessageCount: count,
+		Params:       h.Params,
 	}, nil
 }
 
@@ -169,6 +177,13 @@ func (s *SessionService) Get(projectID, sessionID string) (Session, error) {
 // the persisted Session with timestamps and a fresh UUID if `title`
 // implies it.
 func (s *SessionService) Create(projectID, title, modeID, profileID string) (Session, error) {
+	return s.CreateWithParams(projectID, title, modeID, profileID, nil)
+}
+
+// CreateWithParams is the param-aware variant used by NewSessionModal
+// once the mode's ModeParams form has been filled. params is stored
+// verbatim into the session header for replay on agent runs.
+func (s *SessionService) CreateWithParams(projectID, title, modeID, profileID string, params map[string]any) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -191,6 +206,7 @@ func (s *SessionService) Create(projectID, title, modeID, profileID string) (Ses
 		ProfileID: profileID,
 		CreatedAt: now,
 		UpdatedAt: now,
+		Params:    params,
 	}
 	path := filepath.Join(dir, sess.ID+".jsonl")
 	if err := s.writeHeader(path, sess); err != nil {
@@ -209,6 +225,7 @@ func (s *SessionService) writeHeader(path string, sess Session) error {
 		ProfileID: sess.ProfileID,
 		CreatedAt: sess.CreatedAt,
 		UpdatedAt: sess.UpdatedAt,
+		Params:    sess.Params,
 	}
 	buf, err := json.Marshal(h)
 	if err != nil {

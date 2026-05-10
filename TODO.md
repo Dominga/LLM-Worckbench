@@ -121,9 +121,19 @@ DESIGN.md §5.5 + §9 M4. Decisions:
 
 ### Deferred to follow-ups
 
-- **PR26** — Session-bound mode params capture in NewSessionModal +
-  `Session.Params` persistence. Backend already accepts an AgentContext.Params
-  map; UI just needs the param form.
+- [x] **PR26** — Session-bound mode params. `Session.Params map[string]any`
+      added (carried through `sessionHeader` JSONL line 1 + `readMeta` →
+      `Session.Params`). `SessionService.CreateWithParams(...)` writes them;
+      `Create(...)` stays as the legacy no-params wrapper. App binding
+      `CreateSessionWithParams`. `ChatService` plugs `sess.Params` into
+      `AgentContext.Params` right before the agent loop dispatch, so the
+      prompt template's `{{param.<name>}}` resolves to the user's input.
+      Frontend: `NewSessionModal` fetches `ListModes(projectID)` on open
+      (merged builtin+global+project), reads the selected mode's
+      `params[]`, renders a dynamic form (`string|int|number|bool` → text /
+      number / switch). Submit validates required fields and calls
+      `CreateSessionWithParams`. Frontend `Mode` type extended with
+      `params?` + `systemPromptTemplate?`.
 - **PR27** — Prompt Lab as the mode-template editor (TD17). Today's
   Lab is JS-only.
 - TD12 — JSDoc `@param` → auto-generated parameter form on the Lab tab.

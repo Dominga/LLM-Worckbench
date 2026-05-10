@@ -208,6 +208,7 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			ac := c.agentX(projectID)
 			ac.ProjectID = projectID
 			ac.Mode = resolved
+			ac.Params = sess.Params
 			// Pre-loop git snapshot for `approval = "snapshot"` modes.
 			// Failures are non-fatal — we still let the loop run, but
 			// emit an event so the UI can warn the user that revert

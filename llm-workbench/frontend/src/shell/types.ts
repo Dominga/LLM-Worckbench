@@ -64,9 +64,21 @@ export type Mode = {
   // Tech fields (M3+) — populated by backend ListModes; the static
   // MODES fallback below leaves them undefined.
   systemPrompt?: string;
+  systemPromptTemplate?: string;
   toolWhitelist?: string[];
   approval?: 'always' | 'snapshot' | 'auto';
   context?: 'none' | 'rag-auto' | 'rag-explicit';
+  // M4 PR25/26: parameter schema for the prompt template; the
+  // NewSessionModal renders a form from this.
+  params?: ModeParam[];
+};
+
+export type ModeParam = {
+  name: string;
+  type: 'string' | 'int' | 'number' | 'bool';
+  default?: any;
+  required?: boolean;
+  description?: string;
 };
 
 // Static fallback used before the backend ListModes call resolves and

@@ -14,6 +14,8 @@ export function CreateProject(arg1:string,arg2:string):Promise<main.Project>;
 
 export function CreateSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.Session>;
 
+export function CreateSessionWithParams(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Record<string, any>):Promise<main.Session>;
+
 export function CurrentProject():Promise<main.Project>;
 
 export function DeleteProfile(arg1:string):Promise<void>;

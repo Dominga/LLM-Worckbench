@@ -635,6 +635,7 @@ export namespace main {
 	    // Go type: time
 	    updatedAt: any;
 	    messageCount: number;
+	    params?: Record<string, any>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -650,6 +651,7 @@ export namespace main {
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.messageCount = source["messageCount"];
+	        this.params = source["params"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

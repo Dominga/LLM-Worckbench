@@ -20,6 +20,7 @@ import {
   PickDirectory,
   ListSessions,
   CreateSession,
+  CreateSessionWithParams,
   RenameSession,
   DeleteSession,
   UpdateSessionMode,
@@ -431,14 +432,19 @@ export default function App() {
     setSessionModalOpen(true);
   };
 
-  const onConfirmCreateSession = async (title: string, modeId: string) => {
+  const onConfirmCreateSession = async (
+    title: string,
+    modeId: string,
+    params: Record<string, any>,
+  ) => {
     if (!activeProject) return;
     try {
-      const sess = await CreateSession(
+      const sess = await CreateSessionWithParams(
         activeProject.ID,
         title,
         modeId,
         activeProfileId,
+        params || {},
       );
       await reloadSessions(activeProject, sess.id);
     } catch (e: any) {
@@ -459,7 +465,7 @@ export default function App() {
       const sess = await CreateSession(
         activeProject.ID,
         'New chat',
-        'narrative-coauthor',
+        'chat-only',
         activeProfileId,
       );
       const list = await ListSessions(activeProject.ID);
@@ -678,6 +684,7 @@ export default function App() {
 
       <NewSessionModal
         opened={sessionModalOpen}
+        activeProjectId={activeProject?.ID}
         onClose={() => setSessionModalOpen(false)}
         onCreate={onConfirmCreateSession}
       />
