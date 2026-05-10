@@ -70,8 +70,8 @@ export function ListFiles(arg1) {
   return window['go']['main']['App']['ListFiles'](arg1);
 }
 
-export function ListModes() {
-  return window['go']['main']['App']['ListModes']();
+export function ListModes(arg1) {
+  return window['go']['main']['App']['ListModes'](arg1);
 }
 
 export function ListProfiles() {

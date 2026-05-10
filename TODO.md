@@ -94,13 +94,20 @@ DESIGN.md §5.3 + §9 M3. Decisions for M3:
       whitelist filter, unknown-tool / bad-JSON paths, args roundtrip, and an
       end-to-end pass that runs all four tools against real services on a temp
       project (Reindex → list → read → search → edit + on-disk verify).
-- [ ] **PR16** — Extend `Mode` struct with `SystemPrompt`, `ToolWhitelist []string`,
-      `ApprovalPolicy enum`, `ContextStrategy`. Builtin modes:
-      `chat` (no tools, just LLM), `research` (read-only tools, approval=auto),
-      `agent` (full toolset, approval=always), `auto-edit` (full toolset,
-      approval=snapshot). Project-local modes loaded from
-      `<project>/.llm-workshop/modes/*.toml`. Mode picker actually drives behaviour
-      now (M1 was metadata-only).
+- [x] **PR16** — `Mode` extended with `SystemPrompt`, `ToolWhitelist`,
+      `Approval` (`always | snapshot | auto`), `Context` (`none | rag-auto |
+      rag-explicit`). `validate()` rejects `approval=auto` combined with any write
+      tool. `normalise()` fills missing fields with safe defaults
+      (`approval=always`, `context=rag-explicit`). New builtin set: `chat-only`,
+      `research`, `agent`, `auto-edit` — replaces the M1 narrative roles since
+      those were metadata-only. `ModeService.List(projectID)` merges builtins with
+      project-local TOML files at `<project>/.llm-workshop/modes/*.toml` (project
+      overrides builtin by ID). `Resolve` falls back to `chat-only`. Frontend
+      `MODES` static list mirrors the new IDs (consumed before backend list
+      resolves). Tests: builtin validate, approval=auto+write rejection,
+      whitelist semantics, normalise defaults, project-local override + bad-file
+      skipping, fallback resolution. Mode picker still routes through
+      `UpdateSessionMode` — actual behaviour wiring lands in PR17/18.
 - [ ] **PR17** — Native tool-calling path. ChatService gains `streamWithTools` that
       sends `tools=[]` to llama-server and dispatches tool_call deltas. Capability
       probe on first chat to a profile, cached in profile state.

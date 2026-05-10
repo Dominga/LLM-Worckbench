@@ -1,0 +1,178 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestBuiltinModesValidate(t *testing.T) {
+	for _, m := range ListBuiltinModes() {
+		if err := m.validate(); err != nil {
+			t.Errorf("builtin %q: %v", m.ID, err)
+		}
+	}
+}
+
+func TestApprovalAutoForbidsEditFile(t *testing.T) {
+	m := Mode{
+		ID:            "bad",
+		Approval:      ApprovalAuto,
+		ToolWhitelist: []string{"edit_file"},
+	}
+	m.normalise()
+	if err := m.validate(); err == nil {
+		t.Fatal("expected validate error for approval=auto with edit_file")
+	}
+}
+
+func TestModeContainsTool(t *testing.T) {
+	all := Mode{}
+	all.normalise()
+	if !all.containsTool("edit_file") {
+		t.Errorf("nil whitelist should allow any tool")
+	}
+	limited := Mode{ToolWhitelist: []string{"read_file"}}
+	if limited.containsTool("edit_file") {
+		t.Errorf("whitelist should reject edit_file")
+	}
+	if !limited.containsTool("read_file") {
+		t.Errorf("whitelist should allow read_file")
+	}
+	none := Mode{ToolWhitelist: []string{}}
+	if none.containsTool("read_file") {
+		t.Errorf("empty whitelist should allow nothing")
+	}
+}
+
+func TestModeNormaliseDefaults(t *testing.T) {
+	m := Mode{ID: "x"}
+	m.normalise()
+	if m.Approval != ApprovalAlways {
+		t.Errorf("approval default = %q, want always", m.Approval)
+	}
+	if m.Context != ContextRAGExplicit {
+		t.Errorf("context default = %q, want rag-explicit", m.Context)
+	}
+	if m.Color == "" {
+		t.Error("color default missing")
+	}
+}
+
+func TestProjectLocalModeOverridesBuiltin(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, ProjectDirName, "modes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `id = "agent"
+name = "Custom agent"
+desc = "Project-tuned override."
+system_prompt = "You are project X's agent."
+tool_whitelist = ["search_semantic", "read_file"]
+approval = "always"
+context = "rag-auto"
+`
+	if err := os.WriteFile(filepath.Join(dir, "agent.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prs := &ProjectService{
+		projects: []Project{{ID: "p", Path: tmp, Name: "test"}},
+	}
+	svc := NewModeService(prs)
+	list := svc.List("p")
+
+	var found *Mode
+	for i, m := range list {
+		if m.ID == "agent" {
+			found = &list[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("agent mode missing after merge")
+	}
+	if found.Source != ModeSourceProject {
+		t.Errorf("source = %q, want project (override took effect?)", found.Source)
+	}
+	if found.Name != "Custom agent" {
+		t.Errorf("name = %q, want override", found.Name)
+	}
+	if found.Context != ContextRAGAuto {
+		t.Errorf("context not overridden: %q", found.Context)
+	}
+	// Builtin chat-only should still be present.
+	hasChatOnly := false
+	for _, m := range list {
+		if m.ID == "chat-only" {
+			hasChatOnly = true
+		}
+	}
+	if !hasChatOnly {
+		t.Error("chat-only builtin missing after merge")
+	}
+}
+
+func TestProjectLocalModeBadFileSkipped(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, ProjectDirName, "modes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.toml"),
+		[]byte(`approval = "auto"
+tool_whitelist = ["edit_file"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ok.toml"),
+		[]byte(`name = "OK"
+desc = "fine"
+approval = "always"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modes, warns := loadProjectModes(tmp)
+	if len(warns) == 0 {
+		t.Error("expected at least one warning for broken.toml")
+	}
+	hasOK := false
+	for _, m := range modes {
+		if m.ID == "ok" {
+			hasOK = true
+		}
+		if m.ID == "broken" {
+			t.Error("broken mode should be skipped")
+		}
+	}
+	if !hasOK {
+		t.Errorf("ok mode missing; modes=%v warns=%v", modeIDs(modes), warns)
+	}
+}
+
+func TestModeServiceResolveFallback(t *testing.T) {
+	prs := &ProjectService{
+		projects: []Project{{ID: "p", Path: t.TempDir()}},
+	}
+	svc := NewModeService(prs)
+	got := svc.Resolve("p", "does-not-exist")
+	if got.ID != "chat-only" {
+		t.Errorf("fallback id = %q, want chat-only", got.ID)
+	}
+	got = svc.Resolve("p", "agent")
+	if got.ID != "agent" {
+		t.Errorf("resolve agent failed, got %q", got.ID)
+	}
+	if !strings.Contains(got.SystemPrompt, "agent") {
+		t.Errorf("agent SystemPrompt empty/wrong")
+	}
+}
+
+func modeIDs(ms []Mode) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.ID
+	}
+	return out
+}

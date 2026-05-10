@@ -24,6 +24,7 @@ type App struct {
 	embedder  *EmbeddingService
 	rag       *RAGService
 	tools     *ToolRegistry
+	modes     *ModeService
 }
 
 func NewApp() *App {
@@ -78,6 +79,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.tools = NewToolRegistry()
 	RegisterBuiltinTools(a.tools)
+	a.modes = NewModeService(a.projects)
 
 	a.chat = NewChatService(a.registry, pm, a.sessions)
 	a.chat.Attach(ctx)
@@ -373,8 +375,14 @@ func (a *App) SessionMessages(projectID, sessionID string) ([]SessionMessage, er
 
 // ──────────────────────────── Modes ─────────────────────────────────
 
-func (a *App) ListModes() []Mode {
-	return ListBuiltinModes()
+// ListModes returns builtin modes plus any project-local overrides
+// from `<project>/.llm-workshop/modes/*.toml` for the given project.
+// Empty projectID returns just the builtins.
+func (a *App) ListModes(projectID string) []Mode {
+	if a.modes == nil {
+		return ListBuiltinModes()
+	}
+	return a.modes.List(projectID)
 }
 
 // ──────────────────────────── Projects ──────────────────────────────

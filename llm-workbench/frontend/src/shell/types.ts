@@ -58,20 +58,29 @@ export type Mode = {
   id: string;
   name: string;
   color: string;
-  source: 'builtin' | 'plugin';
+  source: 'builtin' | 'project' | 'plugin';
   desc: string;
   plugin?: string;
+  // Tech fields (M3+) — populated by backend ListModes; the static
+  // MODES fallback below leaves them undefined.
+  systemPrompt?: string;
+  toolWhitelist?: string[];
+  approval?: 'always' | 'snapshot' | 'auto';
+  context?: 'none' | 'rag-auto' | 'rag-explicit';
 };
 
+// Static fallback used before the backend ListModes call resolves and
+// for places that don't pass a project context. Frontend should prefer
+// the backend list once available — this is a shape mirror only.
 export const MODES: Mode[] = [
-  { id: 'narrative-coauthor', name: 'Narrative co-author', color: '#3b82f6', source: 'builtin',
-    desc: 'Long-form prose. Edits stage as diffs, never silent rewrites.' },
-  { id: 'dialogue-writer',    name: 'Dialogue writer',    color: '#a78bfa', source: 'builtin',
-    desc: 'Voice-first. Stays in character; never narrates around the line.' },
-  { id: 'game-designer',      name: 'Game designer',      color: '#f59e0b', source: 'builtin',
-    desc: 'Numbers, tables, balance. Cites lore before suggesting changes.' },
-  { id: 'lore-keeper',        name: 'Lore keeper',        color: '#22c55e', source: 'builtin',
-    desc: 'Read-only by default. Cross-references and consistency sweeps.' },
+  { id: 'chat-only', name: 'Chat only', color: '#94a3b8', source: 'builtin',
+    desc: 'Plain conversation. No tools, no RAG injection.' },
+  { id: 'research', name: 'Research', color: '#22c55e', source: 'builtin',
+    desc: 'Read-only investigation. Searches and reads, never writes.' },
+  { id: 'agent', name: 'Agent', color: '#3b82f6', source: 'builtin',
+    desc: 'Full toolset. User confirms each write via a diff modal.' },
+  { id: 'auto-edit', name: 'Auto-edit', color: '#f59e0b', source: 'builtin',
+    desc: 'Full toolset, no per-edit confirmation. Reverts via git snapshot.' },
 ];
 
 export const MODE_BY_ID: Record<string, Mode> = Object.fromEntries(MODES.map((m) => [m.id, m]));

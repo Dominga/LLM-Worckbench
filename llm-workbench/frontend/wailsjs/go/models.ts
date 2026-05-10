@@ -317,6 +317,10 @@ export namespace main {
 	    source: string;
 	    desc: string;
 	    plugin?: string;
+	    systemPrompt?: string;
+	    toolWhitelist?: string[];
+	    approval?: string;
+	    context?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Mode(source);
@@ -330,6 +334,10 @@ export namespace main {
 	        this.source = source["source"];
 	        this.desc = source["desc"];
 	        this.plugin = source["plugin"];
+	        this.systemPrompt = source["systemPrompt"];
+	        this.toolWhitelist = source["toolWhitelist"];
+	        this.approval = source["approval"];
+	        this.context = source["context"];
 	    }
 	}
 	export class Sampling {

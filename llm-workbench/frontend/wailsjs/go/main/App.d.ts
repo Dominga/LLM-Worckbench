@@ -36,7 +36,7 @@ export function GetSystemMetrics():Promise<main.SystemMetrics>;
 
 export function ListFiles(arg1:string):Promise<Array<main.FileNode>>;
 
-export function ListModes():Promise<Array<main.Mode>>;
+export function ListModes(arg1:string):Promise<Array<main.Mode>>;
 
 export function ListProfiles():Promise<Array<main.Profile>>;
 
