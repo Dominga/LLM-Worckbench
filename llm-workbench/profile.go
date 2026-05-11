@@ -48,9 +48,14 @@ func DefaultSampling() Sampling {
 // Profile is a launchable llama-server configuration. DESIGN.md §4.4.
 // Stored as a TOML element under [[profile]] in profiles.toml.
 type Profile struct {
-	ID          string      `toml:"id"`
-	Kind        ProfileKind `toml:"kind"`
-	BinPath     string      `toml:"bin_path"`
+	ID   string      `toml:"id"`
+	Kind ProfileKind `toml:"kind"`
+	// BuildID, when set, points at a Build artifact (M5) — the supervisor
+	// resolves the launch binary from BuildManager.GetBuild(BuildID).BinaryPath
+	// instead of BinPath. Mutually exclusive with BinPath in the UI; if both
+	// are present in a hand-edited TOML, BuildID wins.
+	BuildID     string      `toml:"build_id,omitempty"`
+	BinPath     string      `toml:"bin_path,omitempty"`
 	BinCwd      string      `toml:"bin_cwd,omitempty"`
 	ModelPath   string      `toml:"model_path"`
 	// MMProjPath is an optional vision-projector model. When set, the
@@ -96,8 +101,8 @@ func (p *Profile) Validate() error {
 	if !p.Kind.Valid() {
 		return fmt.Errorf("invalid kind %q (chat|embed|rerank)", p.Kind)
 	}
-	if strings.TrimSpace(p.BinPath) == "" {
-		return errors.New("bin_path is required")
+	if strings.TrimSpace(p.BuildID) == "" && strings.TrimSpace(p.BinPath) == "" {
+		return errors.New("either build_id or bin_path is required")
 	}
 	if strings.TrimSpace(p.ModelPath) == "" {
 		return errors.New("model_path is required")

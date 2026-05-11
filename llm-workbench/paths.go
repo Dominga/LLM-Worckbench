@@ -52,6 +52,16 @@ func projectsPath() (string, error) {
 	return filepath.Join(d, "projects.toml"), nil
 }
 
+// buildsPath is `~/.config/llm-workbench/builds.toml` — the registry of
+// llama.cpp BuildRecipes and the Build artifacts produced from them (M5).
+func buildsPath() (string, error) {
+	d, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "builds.toml"), nil
+}
+
 // globalModesDir is `~/.config/llm-workbench/modes/`. Per-user mode
 // overrides + their .system.md templates live here. Missing returns
 // "" without error so callers can treat it as "no overrides".

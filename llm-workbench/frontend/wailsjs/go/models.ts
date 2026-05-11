@@ -41,6 +41,146 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class Build {
+	    ID: string;
+	    RecipeID: string;
+	    DisplayName: string;
+	    SourceRepo: string;
+	    Commit: string;
+	    Backend: string;
+	    BinaryPath: string;
+	    Capabilities: string[];
+	    // Go type: time
+	    BuiltAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Build(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.RecipeID = source["RecipeID"];
+	        this.DisplayName = source["DisplayName"];
+	        this.SourceRepo = source["SourceRepo"];
+	        this.Commit = source["Commit"];
+	        this.Backend = source["Backend"];
+	        this.BinaryPath = source["BinaryPath"];
+	        this.Capabilities = source["Capabilities"];
+	        this.BuiltAt = this.convertValues(source["BuiltAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BuildRecipe {
+	    ID: string;
+	    DisplayName: string;
+	    SourceDir: string;
+	    SourceRepo: string;
+	    GitRef: string;
+	    Backend: string;
+	    CMakeFlags: string[];
+	    BuildDir: string;
+	    Jobs: number;
+	    // Go type: time
+	    CreatedAt: any;
+	    // Go type: time
+	    UpdatedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new BuildRecipe(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.DisplayName = source["DisplayName"];
+	        this.SourceDir = source["SourceDir"];
+	        this.SourceRepo = source["SourceRepo"];
+	        this.GitRef = source["GitRef"];
+	        this.Backend = source["Backend"];
+	        this.CMakeFlags = source["CMakeFlags"];
+	        this.BuildDir = source["BuildDir"];
+	        this.Jobs = source["Jobs"];
+	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BuildStatus {
+	    recipeId: string;
+	    phase: string;
+	    running: boolean;
+	    message?: string;
+	    buildId?: string;
+	    // Go type: time
+	    startedAt?: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new BuildStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.recipeId = source["recipeId"];
+	        this.phase = source["phase"];
+	        this.running = source["running"];
+	        this.message = source["message"];
+	        this.buildId = source["buildId"];
+	        this.startedAt = this.convertValues(source["startedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ChatMessage {
 	    role: string;
 	    content: string;
@@ -83,6 +223,26 @@ export namespace main {
 	        this.sparseRank = source["sparseRank"];
 	        this.denseDist = source["denseDist"];
 	        this.sparseBm25 = source["sparseBm25"];
+	    }
+	}
+	export class DetectedGPU {
+	    vendor: string;
+	    name: string;
+	    vramMib: number;
+	    source: string;
+	    backend: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DetectedGPU(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vendor = source["vendor"];
+	        this.name = source["name"];
+	        this.vramMib = source["vramMib"];
+	        this.source = source["source"];
+	        this.backend = source["backend"];
 	    }
 	}
 	export class EmbeddingProgress {
@@ -148,6 +308,40 @@ export namespace main {
 	        this.size = source["size"];
 	        this.modified = this.convertValues(source["modified"], null);
 	        this.children = this.convertValues(source["children"], FileNode);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GPUDetection {
+	    gpus: DetectedGPU[];
+	    probed: string[];
+	    available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GPUDetection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gpus = this.convertValues(source["gpus"], DetectedGPU);
+	        this.probed = source["probed"];
+	        this.available = source["available"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -445,6 +639,7 @@ export namespace main {
 	export class Profile {
 	    ID: string;
 	    Kind: string;
+	    BuildID: string;
 	    BinPath: string;
 	    BinCwd: string;
 	    ModelPath: string;
@@ -473,6 +668,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Kind = source["Kind"];
+	        this.BuildID = source["BuildID"];
 	        this.BinPath = source["BinPath"];
 	        this.BinCwd = source["BinCwd"];
 	        this.ModelPath = source["ModelPath"];
@@ -710,6 +906,30 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class SourceDirInfo {
+	    path: string;
+	    exists: boolean;
+	    isGitRepo: boolean;
+	    gitRemote: string;
+	    configuredBuildDir: string;
+	    cmakeFlags: string[];
+	    backend: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SourceDirInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.exists = source["exists"];
+	        this.isGitRepo = source["isGitRepo"];
+	        this.gitRemote = source["gitRemote"];
+	        this.configuredBuildDir = source["configuredBuildDir"];
+	        this.cmakeFlags = source["cmakeFlags"];
+	        this.backend = source["backend"];
+	    }
 	}
 	export class Status {
 	    running: boolean;

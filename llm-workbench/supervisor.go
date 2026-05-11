@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -87,6 +89,10 @@ var tpsLine = regexp.MustCompile(`tokens\s+(\d+)\s*\|\s*([\d.]+)\s*t/s`)
 type ServerInstance struct {
 	profile Profile
 	ctx     context.Context
+	// builds resolves Profile.BuildID → binary path at launch time. May be
+	// nil when the build registry failed to load; binPath() then errors
+	// only if the profile actually references a build.
+	builds *BuildManager
 
 	mu            sync.Mutex
 	cmd           *exec.Cmd
@@ -104,16 +110,41 @@ type ServerInstance struct {
 	reqs     int64
 }
 
-func newServerInstance(profile Profile, ctx context.Context) *ServerInstance {
+func newServerInstance(profile Profile, ctx context.Context, builds *BuildManager) *ServerInstance {
 	return &ServerInstance{
 		profile: profile,
 		ctx:     ctx,
+		builds:  builds,
 		state:   StateStopped,
 		logRing: make([]string, 0, logRingSize),
 	}
 }
 
 func (si *ServerInstance) BaseURL() string { return si.profile.BaseURL() }
+
+// binPath resolves the llama-server executable to launch. When the profile
+// references a Build (M5), the path comes from that artifact (and is
+// stat-checked so a deleted/unfinished build fails loudly rather than
+// exec'ing a missing file); otherwise it's the profile's manual BinPath.
+func (si *ServerInstance) binPath() (string, error) {
+	if id := strings.TrimSpace(si.profile.BuildID); id != "" {
+		if si.builds == nil {
+			return "", fmt.Errorf("profile %q references build %q but the build registry is unavailable", si.profile.ID, id)
+		}
+		b, err := si.builds.GetBuild(id)
+		if err != nil {
+			return "", fmt.Errorf("profile %q build: %w", si.profile.ID, err)
+		}
+		if fi, err := os.Stat(b.BinaryPath); err != nil || fi.IsDir() {
+			return "", fmt.Errorf("build %q binary not found at %s (was the build deleted or never finished?)", id, b.BinaryPath)
+		}
+		return b.BinaryPath, nil
+	}
+	if p := strings.TrimSpace(si.profile.BinPath); p != "" {
+		return p, nil
+	}
+	return "", fmt.Errorf("profile %q has neither build_id nor bin_path", si.profile.ID)
+}
 
 // effectiveArgs builds the CLI argv for this profile, auto-adding
 // kind-specific flags if missing so users don't have to remember them.
@@ -168,8 +199,12 @@ func (si *ServerInstance) Start() error {
 	}
 	si.mu.Unlock()
 
+	bin, err := si.binPath()
+	if err != nil {
+		return err
+	}
 	args := si.effectiveArgs()
-	cmd := exec.Command(si.profile.BinPath, args...)
+	cmd := exec.Command(bin, args...)
 	if si.profile.BinCwd != "" {
 		cmd.Dir = si.profile.BinCwd
 	}
@@ -226,7 +261,7 @@ func (si *ServerInstance) Start() error {
 	if vramSnap != "" {
 		si.appendLog("stdout", vramSnap)
 	}
-	si.appendLog("stdout", fmt.Sprintf("started pid=%d cmd=%s %v", cmd.Process.Pid, si.profile.BinPath, args))
+	si.appendLog("stdout", fmt.Sprintf("started pid=%d cmd=%s %v", cmd.Process.Pid, bin, args))
 	si.emitStatus()
 
 	go si.pump("stdout", stdout)
@@ -463,12 +498,14 @@ type ServerRegistry struct {
 	mu        sync.Mutex
 	ctx       context.Context
 	pm        *ProfileManager
+	builds    *BuildManager // resolves Profile.BuildID; may be nil
 	instances map[string]*ServerInstance
 }
 
-func NewServerRegistry(pm *ProfileManager) *ServerRegistry {
+func NewServerRegistry(pm *ProfileManager, builds *BuildManager) *ServerRegistry {
 	return &ServerRegistry{
 		pm:        pm,
+		builds:    builds,
 		instances: make(map[string]*ServerInstance),
 	}
 }
@@ -503,7 +540,7 @@ func (r *ServerRegistry) instanceFor(id string) (*ServerInstance, error) {
 	if si, ok := r.instances[id]; ok {
 		return si, nil
 	}
-	si = newServerInstance(p, r.ctx)
+	si = newServerInstance(p, r.ctx, r.builds)
 	r.instances[id] = si
 	return si, nil
 }

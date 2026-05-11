@@ -62,6 +62,32 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 **Files:** `supervisor.go`, `frontend/src/App.tsx`, `frontend/src/tabs/ServersTab.tsx`.
 
+### B7 — Modes from settings don't show in the chat window
+
+**Is:** modes configured in settings (global `~/.config/llm-workbench/modes/*.toml`
+and/or project-local) are not offered in the chat window's mode picker /
+`NewSessionModal`. Only builtins appear.
+
+**Should be:** `NewSessionModal` (and any in-chat mode switcher) lists the merged
+builtin + global + project modes — the same set the Prompt Lab `ModesPanel` shows.
+
+**Files:** `frontend/src/components/NewSessionModal.tsx`, mode-list binding
+(`ListModes`), `mode.go`/`mode_service.go` (verify global dir is merged in the
+path the chat flow uses).
+
+### B8 — Modes are read-only on the Prompts (Prompt Lab) tab
+
+**Is:** the Prompts/Prompt Lab tab can display a mode's template but edits don't
+stick — modes are effectively view-only there.
+
+**Should be:** edit existing modes from the Prompts tab; saving a builtin/global
+mode writes a project-local override (per PR27's intent). Verify
+`SaveModeTemplate` is wired to the editor's save action and that the editor isn't
+mounted read-only.
+
+**Files:** `frontend/src/tabs/LabTab.tsx` (`ModesPanel`), `SaveModeTemplate`
+binding.
+
 ## Milestone 4 — Scripting + Prompt Lab
 
 DESIGN.md §5.5 + §9 M4. Decisions:
@@ -155,6 +181,178 @@ DESIGN.md §5.5 + §9 M4. Decisions:
 - TD18 — Scripts global/per-project split (mirror modes: `~/.config/llm-workbench/scripts/`
   alongside per-project `<project>/.llm-workshop/scripts/`, project overrides
   global by name). Once landed, list-merge in `ScriptStore`.
+- TD19 — External modes registry + per-mode install. Think about a remote
+  repository of modes that users browse and install individually,
+  apt-package style (`install <mode>`, update/remove per mode; central or
+  community-hosted index). Implications: stable mode IDs, versioning, a
+  manifest format → keep in mind when finalising on-disk mode storage so it's
+  registry-friendly. Out of scope until M4 modes are solid.
+
+## Milestone 5 — Builds & forks
+
+DESIGN.md §4.1–4.2 + §5.1 (FR-LLM-1..3) + §9 M5. Decisions:
+
+- **UI placement:** builds live on the **Servers tab** alongside profiles —
+  the user manages llama.cpp compilation there (point at an existing source
+  checkout, or a folder + a git remote to clone into it, plus cmake flags),
+  then profiles reference the produced `Build` by id.
+- **Source location:** user-supplied. `BuildRecipe.source_dir` is the local
+  checkout; optional `source_repo` + `git_ref` drive a clone/fetch+checkout
+  before building. The cmake build output (`<source_dir>/<build_dir>/bin/llama-server`)
+  is the artifact path — no extra copy/stage step in v1.
+- **Model split:** `BuildRecipe` (the *how* — source dir/repo/ref + cmake
+  flags) is editable & long-lived; `Build` (the *artifact* — resolved commit,
+  binary path, backend, built_at) is produced by the orchestrator and is
+  effectively immutable (a rebuild from the same recipe replaces it in place).
+- **Storage:** single `~/.config/llm-workbench/builds.toml` holding both
+  `[[recipe]]` and `[[build]]` arrays, managed by `BuildManager` (mirrors
+  `ProfileManager`: atomic tmp+rename save, RWMutex, CRUD).
+
+### PRs
+
+- [x] **PR28** — `build.go`: `BuildBackend` enum (cpu/cuda11/cuda12/rocm/
+      vulkan/metal), `BuildRecipe` (id, display_name, source_dir, source_repo?,
+      git_ref?, backend?, cmake_flags[], build_dir=`build`, jobs) and `Build`
+      (id, recipe_id, source_repo?, commit?, backend?, binary_path,
+      capabilities[], built_at) structs with `Validate()`. `BuildManager`
+      loads/saves `builds.toml`; recipe CRUD (`ListRecipes/GetRecipe/
+      CreateRecipe/UpdateRecipe/DeleteRecipe` — gen-id-if-blank, dedupe,
+      preserve CreatedAt, atomic save+rollback) and build CRUD
+      (`ListBuilds/GetBuild/AddBuild` (replace-on-same-id, for the
+      orchestrator)/`DeleteBuild`). `buildsPath()` in `paths.go`. Wired into
+      `App` (`a.builds`, non-fatal on load failure) + bindings
+      `ListBuildRecipes/GetBuildRecipe/CreateBuildRecipe/UpdateBuildRecipe/
+      DeleteBuildRecipe/ListBuilds/GetBuild/DeleteBuild`. Tests: backend
+      validity, recipe/build validate matrices, BuildDirOrDefault, recipe CRUD
+      (sorted list, dup reject, update preserves/bumps timestamps, delete
+      no-op), build CRUD (gen-id, replace-on-same-id, delete no-op),
+      persistence roundtrip (recipes + builds in one file).
+- [x] **PR29** — `gpu_detect.go`: `GPUVendor` enum (nvidia/amd/intel/apple),
+      `DetectedGPU` (vendor, name, vramMib, source-probe, suggested backend —
+      kept separate from `GPUInfo` in `gpu_metrics.go`, which is live VRAM
+      telemetry), `GPUDetection` (gpus[], probed-tools[], available).
+      `DetectGPU()` runs whichever of `nvidia-smi` / `rocminfo` / `vulkaninfo`
+      / `system_profiler` are on PATH (4 s timeout each), parses each, and
+      dedups by (vendor, name) — probe order doubles as dedup priority so a
+      card seen by the vendor tool beats the generic Vulkan probe. Per-probe
+      parsers are pure string→[]DetectedGPU funcs (`parseNvidiaSmiNames` CSV,
+      `parseRocminfo` agent-block state machine filtering Device Type=GPU,
+      `parseVulkaninfoSummary` GPUn: blocks skipping llvmpipe/CPU,
+      `parseSystemProfilerDisplays` Chipset Model lines → Metal). Vendor
+      inference from PCI id (`vendorFromPCIID`) + marketing-name heuristics
+      (`inferVendorFromName`). `SuggestRecipes(GPUDetection)` → always a
+      `cpu` recipe + one per distinct GPU backend, cmake flags pre-filled
+      (`-DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON`, `-DGGML_HIP=ON`,
+      `-DGGML_VULKAN=ON`, none for Metal/CPU), `SourceDir` left empty for the
+      user; not persisted. App bindings `DetectGPU()`, `SuggestBuildRecipes()`.
+      Tests: each parser on a realistic sample (incl. CPU-agent / llvmpipe
+      filtering, vendorID-missing → name fallback), vendor inference tables,
+      `dedupGPUs` keeps the cuda entry over the vulkan one, `SuggestRecipes`
+      empty→cpu-only / nvidia→cpu+cuda / nvidia+amd→cpu+cuda+rocm in order /
+      two-nvidia→still one cuda recipe.
+- [x] **PR30** — `build_orchestrator.go`: `BuildOrchestrator` (bound to
+      `BuildManager`, one in-flight build per recipe, mutex never held across
+      a subprocess wait). `Start(recipeID)` validates synchronously (unknown
+      recipe / missing source_dir with no source_repo / already running) then
+      runs in the background; `Cancel(recipeID)`, `Status(recipeID)
+      BuildStatus`, `Log(recipeID) []string`. Phases streamed as
+      `build:status:<recipeID>` (`idle→cloning|fetching→configuring→compiling→
+      done|failed|cancelled`, with `Running`/`Message`/`BuildID`) + every
+      line on `build:log:<recipeID>` (log capped at 30k lines). Steps: (1)
+      if `source_repo` set & `source_dir` empty/absent → `git clone <repo>
+      <dir>`; else `git fetch --all --tags`; then if `git_ref` → `git checkout
+      <ref>`; (2) `git rev-parse HEAD` → resolved commit (best-effort);
+      (3) `cmake -S <src> -B <buildDir> <cmake_flags...>`; (4) `cmake --build
+      <buildDir> --config Release -j[N]`; (5) `locateLlamaServer` checks
+      `bin/`, `bin/Release/`, root, then a tree walk; (6) persist the log to
+      `<buildDir>/llm-workbench-build.log` and `BuildManager.AddBuild` (build
+      ID = recipe ID, so a rebuild replaces in place). Each child runs in its
+      own process group (`procGroupAttr`: `Setpgid` + Linux `Pdeathsig`); a
+      per-command watchdog SIGTERMs the group on ctx cancel, SIGKILL after 5s
+      (mirrors `LlamaSupervisor.Stop`). Pipes drained before `cmd.Wait`. App
+      bindings `StartBuild/CancelBuild/GetBuildStatus/GetBuildLog`; orchestrator
+      built in `startup` only when `BuildManager` loaded. Tests use fake
+      `git`/`cmake` shell shims on PATH (skip on non-POSIX): existing-source
+      build → Done + Build registered with resolved commit & located binary on
+      disk + rebuild replaces (no dup); clone path → `.git` created + checkout
+      logged; missing source + no repo → `Start` errors; cancel mid-compile
+      (4s sleep in fake `--build`) → Cancelled + no Build registered + can
+      restart; second `Start` while running → errors.
+- [x] **PR31** — `Profile.BuildID` field (`build_id,omitempty`); `BinPath`
+      now `bin_path,omitempty`. `Profile.Validate()` requires at least one of
+      `build_id` / `bin_path` (both is tolerated for hand-edited TOML; the UI
+      keeps them mutually exclusive — picking a build clears the manual path).
+      `ServerInstance` gains a `*BuildManager` ref and a `binPath()` resolver:
+      `build_id` set → `BuildManager.GetBuild(id).BinaryPath` *and* an
+      `os.Stat` so a deleted/unfinished build fails loudly instead of exec'ing
+      a missing file; otherwise the manual `BinPath`. `Start()` resolves via
+      `binPath()` before spawning; the started-pid log line shows the resolved
+      path. `NewServerRegistry(pm, builds)` / `newServerInstance(p, ctx, builds)`
+      thread the manager through; `app.go` passes `a.builds` (may be nil →
+      `binPath()` errors only if a profile actually references a build).
+      `ProfileForm.tsx`: a "Build" `Select` (fetched via `ListBuilds()` on
+      open) with a `— manual binary path —` option; choosing a build hides the
+      manual path field and shows the resolved `BinaryPath` (or a "not found —
+      rebuild it" hint); `toProfile` sends `BinPath=""` when a build is
+      picked. Tests: `Profile.Validate` bin-source matrix (bin only / build
+      only / both ok / neither rejected); `binPath()` — manual path; build_id
+      with nil registry → error; build_id → resolved existing binary;
+      unknown build id → error; build whose binary file is gone → error.
+- [x] **PR32** — `frontend/src/components/BuildsPanel.tsx`, mounted at the
+      bottom of `ServersTab.tsx` (collapsible `Card`, default collapsed; no
+      new tab). On expand: `ListBuildRecipes` + `ListBuilds` + `DetectGPU`,
+      and `EventsOn('build:status:<id>' / 'build:log:<id>')` for every recipe
+      (re-subscribed on recipe-set change; cleaned up on collapse/unmount).
+      Sections: (1) "Detected accelerators" card — `DetectedGPU` rows
+      (backend badge, name, VRAM GB, `via <probe>`) + a re-probe button; (2)
+      recipes list — per recipe a card with display name / backend badge /
+      live phase badge, `source_dir` (+ `← repo @ref` when set), cmake flags,
+      and actions: Build (`StartBuild`, sync error → toast) or Cancel
+      (`CancelBuild`) while running, a log toggle (`build:log` lines streamed
+      into a bottom-anchored `ScrollArea`, falls back to `GetBuildLog`), Edit,
+      Delete; (3) "Built binaries" — `ListBuilds` rows (display name, backend,
+      short commit, path, "forget" delete). `RecipeEditor` modal (create /
+      edit): ID (locked on edit), display name, source dir (`PickDirectory`),
+      git remote + ref, backend `Select`, build subdir, parallel jobs, cmake
+      flags `TagsInput` with copy/paste-as-space-string buttons, plus a
+      "prefill from a detected-hardware suggestion" `Select` (from
+      `SuggestBuildRecipes()` — fills backend + flags, leaves source dir to
+      the user); submit → `CreateBuildRecipe` / `UpdateBuildRecipe`. Toasts on
+      build done / failed / cancelled.
+
+- [x] **PR33** — Source-dir introspection in the recipe editor.
+      `source_inspect.go`: `InspectSourceDir(dir) SourceDirInfo` (path /
+      exists / isGitRepo / gitRemote / configuredBuildDir / cmakeFlags /
+      backend). Git remote: parse `<dir>/.git/config` directly (no `git`
+      dependency), following a worktree-style `.git` *file*'s `gitdir:`
+      pointer; prefer `origin`, else first remote with a URL. CMake flags:
+      probe `<dir>/build*/CMakeCache.txt`, reconstruct `-D…` for
+      `GGML_*`/`LLAMA_*` BOOLs that are ON + their string values +
+      `CMAKE_BUILD_TYPE` + `AMDGPU_TARGETS`/`CMAKE_CUDA_ARCHITECTURES`,
+      skipping `INTERNAL`/`STATIC`/`*-ADVANCED`. `backendFromFlags` derives a
+      backend hint (`GGML_CUDA→cuda12`, `GGML_HIP→rocm`, `GGML_VULKAN→vulkan`,
+      `GGML_METAL→metal`). App binding `InspectSourceDir`. Tests: full
+      `.git/config` (two remotes → origin wins) + realistic `CMakeCache.txt`
+      (ON flags kept, OFF/INTERNAL/ADVANCED/non-GGML filtered, backend=cuda12);
+      empty/missing/plain-dir; `.git`-file `gitdir:` pointer. `BuildsPanel`
+      `RecipeEditor`: after `PickDirectory` (and via a "scan" magnifier
+      button next to the folder picker) calls `InspectSourceDir` and
+      pre-fills only the *empty* fields (`SourceRepo`, `BuildDir`,
+      `CMakeFlags`, `Backend`); shows a hint line ("git remote: …" /
+      "prior cmake build in build/ → imported N flags" / "directory not found
+      yet").
+
+### Open / deferred
+
+- TD20 — Multi-platform cross-builds (one recipe → several backends in a
+  matrix). Defer; v1 is one recipe = one binary.
+- TD21 — Auto-detect `Build.capabilities` by probing the built `llama-server
+  --help` for `--embeddings` / `--mmproj` / rerank flags instead of taking
+  the recipe's backend hint at face value.
+- Backend hint vs reality: the recipe's `backend` field is advisory — the
+  actual backend is whatever the cmake flags enable. PR29 keeps them in sync
+  for *suggested* recipes; user-edited recipes can drift. Acceptable for v1;
+  TD21 would close it.
 
 ## Milestone 3 — Agent loop
 

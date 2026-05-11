@@ -13,15 +13,17 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	cfg      *Config
-	registry *ServerRegistry
-	chat     *ChatService
-	renderer *Renderer
-	profiles *ProfileManager
-	projects *ProjectService
-	files    *FileService
-	sessions *SessionService
+	ctx       context.Context
+	cfg       *Config
+	registry  *ServerRegistry
+	chat      *ChatService
+	renderer  *Renderer
+	profiles  *ProfileManager
+	builds    *BuildManager
+	buildOrch *BuildOrchestrator
+	projects  *ProjectService
+	files     *FileService
+	sessions  *SessionService
 	indexes   *IndexRegistry
 	indexer   *FileIndexer
 	embedder  *EmbeddingService
@@ -63,7 +65,18 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	a.registry = NewServerRegistry(pm)
+	bm, err := NewBuildManager()
+	if err != nil {
+		// Non-fatal: profiles can still launch user-supplied binaries
+		// directly even if the build registry won't load.
+		wruntime.LogErrorf(ctx, "build manager: %v", err)
+	} else {
+		a.builds = bm
+		a.buildOrch = NewBuildOrchestrator(bm)
+		a.buildOrch.Attach(ctx)
+	}
+
+	a.registry = NewServerRegistry(pm, a.builds)
 	a.registry.Attach(ctx)
 	a.registry.Touch()
 	a.registry.hookLegacyStatus()
@@ -427,6 +440,124 @@ func (a *App) DeleteProfile(id string) error {
 	return a.profiles.Delete(id)
 }
 
+// ──────────────────────────── Builds (M5) ───────────────────────────
+
+func (a *App) ListBuildRecipes() []BuildRecipe {
+	if a.builds == nil {
+		return []BuildRecipe{}
+	}
+	return a.builds.ListRecipes()
+}
+
+func (a *App) GetBuildRecipe(id string) (BuildRecipe, error) {
+	if a.builds == nil {
+		return BuildRecipe{}, fmt.Errorf("build manager not initialized")
+	}
+	return a.builds.GetRecipe(id)
+}
+
+func (a *App) CreateBuildRecipe(r BuildRecipe) (BuildRecipe, error) {
+	if a.builds == nil {
+		return BuildRecipe{}, fmt.Errorf("build manager not initialized")
+	}
+	return a.builds.CreateRecipe(r)
+}
+
+func (a *App) UpdateBuildRecipe(id string, r BuildRecipe) (BuildRecipe, error) {
+	if a.builds == nil {
+		return BuildRecipe{}, fmt.Errorf("build manager not initialized")
+	}
+	return a.builds.UpdateRecipe(id, r)
+}
+
+func (a *App) DeleteBuildRecipe(id string) error {
+	if a.builds == nil {
+		return nil
+	}
+	return a.builds.DeleteRecipe(id)
+}
+
+func (a *App) ListBuilds() []Build {
+	if a.builds == nil {
+		return []Build{}
+	}
+	return a.builds.ListBuilds()
+}
+
+func (a *App) GetBuild(id string) (Build, error) {
+	if a.builds == nil {
+		return Build{}, fmt.Errorf("build manager not initialized")
+	}
+	return a.builds.GetBuild(id)
+}
+
+func (a *App) DeleteBuild(id string) error {
+	if a.builds == nil {
+		return nil
+	}
+	return a.builds.DeleteBuild(id)
+}
+
+// DetectGPU probes the host for accelerators (nvidia-smi / rocminfo /
+// vulkaninfo / system_profiler) so the Builds UI can show what's available
+// and pre-fill a sensible recipe. Safe to call any time; tools that aren't
+// installed are simply skipped.
+func (a *App) DetectGPU() GPUDetection {
+	return DetectGPU()
+}
+
+// SuggestBuildRecipes returns starter BuildRecipe templates (a CPU recipe
+// plus one per detected GPU backend) with cmake flags pre-filled. The
+// SourceDir is left empty for the user to fill in; nothing is persisted
+// until the user saves one via CreateBuildRecipe.
+func (a *App) SuggestBuildRecipes() []BuildRecipe {
+	return SuggestRecipes(DetectGPU())
+}
+
+// StartBuild compiles the named recipe in the background. Returns an error
+// synchronously for problems worth surfacing immediately (unknown recipe,
+// missing source dir with nothing to clone, a build already in flight);
+// otherwise progress streams via `build:log:<recipeID>` /
+// `build:status:<recipeID>` events and is queryable via GetBuildStatus.
+func (a *App) StartBuild(recipeID string) error {
+	if a.buildOrch == nil {
+		return fmt.Errorf("build orchestrator unavailable")
+	}
+	return a.buildOrch.Start(recipeID)
+}
+
+// CancelBuild requests cancellation of the in-flight build for the recipe.
+// No-op if nothing is running.
+func (a *App) CancelBuild(recipeID string) {
+	if a.buildOrch != nil {
+		a.buildOrch.Cancel(recipeID)
+	}
+}
+
+// GetBuildStatus returns a snapshot of the recipe's latest build run. A
+// zero-value status (Phase "") means no build has been started for it.
+func (a *App) GetBuildStatus(recipeID string) BuildStatus {
+	if a.buildOrch == nil {
+		return BuildStatus{RecipeID: recipeID}
+	}
+	return a.buildOrch.Status(recipeID)
+}
+
+// GetBuildLog returns the captured log lines for the recipe's latest run.
+func (a *App) GetBuildLog(recipeID string) []string {
+	if a.buildOrch == nil {
+		return nil
+	}
+	return a.buildOrch.Log(recipeID)
+}
+
+// InspectSourceDir looks at a candidate llama.cpp checkout: reports its git
+// remote (if any) and the cmake flags from a previous configure (if any), so
+// the build-recipe editor can pre-fill source_repo / cmake_flags.
+func (a *App) InspectSourceDir(dir string) SourceDirInfo {
+	return InspectSourceDir(dir)
+}
+
 // ──────────────────────────── Server lifecycle ──────────────────────
 
 func (a *App) StartProfile(id string) error {
@@ -611,7 +742,7 @@ func (a *App) ListProjects() []Project {
 }
 
 // CurrentProject returns the active project, or a zero-value Project (ID
-// "") if none is selected. The TS layer checks `result.ID !== ''`.
+// "") if none is selected. The TS layer checks `result.ID !== ”`.
 func (a *App) CurrentProject() Project {
 	if a.projects == nil {
 		return Project{}

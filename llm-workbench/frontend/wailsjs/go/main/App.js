@@ -6,12 +6,20 @@ export function BuildEmbeddings(arg1, arg2) {
   return window['go']['main']['App']['BuildEmbeddings'](arg1, arg2);
 }
 
+export function CancelBuild(arg1) {
+  return window['go']['main']['App']['CancelBuild'](arg1);
+}
+
 export function ChatCancel(arg1) {
   return window['go']['main']['App']['ChatCancel'](arg1);
 }
 
 export function ChatStream(arg1, arg2, arg3) {
   return window['go']['main']['App']['ChatStream'](arg1, arg2, arg3);
+}
+
+export function CreateBuildRecipe(arg1) {
+  return window['go']['main']['App']['CreateBuildRecipe'](arg1);
 }
 
 export function CreateProfile(arg1) {
@@ -34,6 +42,14 @@ export function CurrentProject() {
   return window['go']['main']['App']['CurrentProject']();
 }
 
+export function DeleteBuild(arg1) {
+  return window['go']['main']['App']['DeleteBuild'](arg1);
+}
+
+export function DeleteBuildRecipe(arg1) {
+  return window['go']['main']['App']['DeleteBuildRecipe'](arg1);
+}
+
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
@@ -48,6 +64,26 @@ export function DeleteScript(arg1, arg2) {
 
 export function DeleteSession(arg1, arg2) {
   return window['go']['main']['App']['DeleteSession'](arg1, arg2);
+}
+
+export function DetectGPU() {
+  return window['go']['main']['App']['DetectGPU']();
+}
+
+export function GetBuild(arg1) {
+  return window['go']['main']['App']['GetBuild'](arg1);
+}
+
+export function GetBuildLog(arg1) {
+  return window['go']['main']['App']['GetBuildLog'](arg1);
+}
+
+export function GetBuildRecipe(arg1) {
+  return window['go']['main']['App']['GetBuildRecipe'](arg1);
+}
+
+export function GetBuildStatus(arg1) {
+  return window['go']['main']['App']['GetBuildStatus'](arg1);
 }
 
 export function GetConfig() {
@@ -74,8 +110,20 @@ export function GetSystemMetrics() {
   return window['go']['main']['App']['GetSystemMetrics']();
 }
 
+export function InspectSourceDir(arg1) {
+  return window['go']['main']['App']['InspectSourceDir'](arg1);
+}
+
 export function ListAgentSnapshots(arg1) {
   return window['go']['main']['App']['ListAgentSnapshots'](arg1);
+}
+
+export function ListBuildRecipes() {
+  return window['go']['main']['App']['ListBuildRecipes']();
+}
+
+export function ListBuilds() {
+  return window['go']['main']['App']['ListBuilds']();
 }
 
 export function ListFiles(arg1) {
@@ -202,6 +250,10 @@ export function SetActiveProject(arg1) {
   return window['go']['main']['App']['SetActiveProject'](arg1);
 }
 
+export function StartBuild(arg1) {
+  return window['go']['main']['App']['StartBuild'](arg1);
+}
+
 export function StartProfile(arg1) {
   return window['go']['main']['App']['StartProfile'](arg1);
 }
@@ -216,6 +268,14 @@ export function StopProfile(arg1) {
 
 export function StopServer() {
   return window['go']['main']['App']['StopServer']();
+}
+
+export function SuggestBuildRecipes() {
+  return window['go']['main']['App']['SuggestBuildRecipes']();
+}
+
+export function UpdateBuildRecipe(arg1, arg2) {
+  return window['go']['main']['App']['UpdateBuildRecipe'](arg1, arg2);
 }
 
 export function UpdateProfile(arg1, arg2) {

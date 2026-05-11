@@ -4,9 +4,13 @@ import {main} from '../models';
 
 export function BuildEmbeddings(arg1:string,arg2:string):Promise<main.EmbeddingProgress>;
 
+export function CancelBuild(arg1:string):Promise<void>;
+
 export function ChatCancel(arg1:string):Promise<void>;
 
 export function ChatStream(arg1:string,arg2:Array<main.ChatMessage>,arg3:number):Promise<main.StreamHandle>;
+
+export function CreateBuildRecipe(arg1:main.BuildRecipe):Promise<main.BuildRecipe>;
 
 export function CreateProfile(arg1:main.Profile):Promise<main.Profile>;
 
@@ -18,6 +22,10 @@ export function CreateSessionWithParams(arg1:string,arg2:string,arg3:string,arg4
 
 export function CurrentProject():Promise<main.Project>;
 
+export function DeleteBuild(arg1:string):Promise<void>;
+
+export function DeleteBuildRecipe(arg1:string):Promise<void>;
+
 export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteProject(arg1:string):Promise<void>;
@@ -25,6 +33,16 @@ export function DeleteProject(arg1:string):Promise<void>;
 export function DeleteScript(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteSession(arg1:string,arg2:string):Promise<void>;
+
+export function DetectGPU():Promise<main.GPUDetection>;
+
+export function GetBuild(arg1:string):Promise<main.Build>;
+
+export function GetBuildLog(arg1:string):Promise<Array<string>>;
+
+export function GetBuildRecipe(arg1:string):Promise<main.BuildRecipe>;
+
+export function GetBuildStatus(arg1:string):Promise<main.BuildStatus>;
 
 export function GetConfig():Promise<Record<string, any>>;
 
@@ -38,7 +56,13 @@ export function GetSession(arg1:string,arg2:string):Promise<main.Session>;
 
 export function GetSystemMetrics():Promise<main.SystemMetrics>;
 
+export function InspectSourceDir(arg1:string):Promise<main.SourceDirInfo>;
+
 export function ListAgentSnapshots(arg1:string):Promise<Array<main.AgentSnapshot>>;
+
+export function ListBuildRecipes():Promise<Array<main.BuildRecipe>>;
+
+export function ListBuilds():Promise<Array<main.Build>>;
 
 export function ListFiles(arg1:string):Promise<Array<main.FileNode>>;
 
@@ -102,6 +126,8 @@ export function SessionMessages(arg1:string,arg2:string):Promise<Array<main.Sess
 
 export function SetActiveProject(arg1:string):Promise<main.Project>;
 
+export function StartBuild(arg1:string):Promise<void>;
+
 export function StartProfile(arg1:string):Promise<void>;
 
 export function StartServer():Promise<void>;
@@ -109,6 +135,10 @@ export function StartServer():Promise<void>;
 export function StopProfile(arg1:string):Promise<void>;
 
 export function StopServer():Promise<void>;
+
+export function SuggestBuildRecipes():Promise<Array<main.BuildRecipe>>;
+
+export function UpdateBuildRecipe(arg1:string,arg2:main.BuildRecipe):Promise<main.BuildRecipe>;
 
 export function UpdateProfile(arg1:string,arg2:main.Profile):Promise<main.Profile>;
 

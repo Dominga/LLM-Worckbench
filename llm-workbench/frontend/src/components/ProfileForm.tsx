@@ -21,6 +21,7 @@ import {
   UpdateProfile,
   PickFile,
   PickDirectory,
+  ListBuilds,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 import { Profile } from '../shell/types';
@@ -41,6 +42,7 @@ export type ProfileFormProps = {
 type FormState = {
   ID: string;
   Kind: 'chat' | 'embed' | 'rerank';
+  BuildID: string;
   BinPath: string;
   BinCwd: string;
   ModelPath: string;
@@ -65,6 +67,7 @@ function emptyForm(): FormState {
   return {
     ID: '',
     Kind: 'chat',
+    BuildID: '',
     BinPath: '',
     BinCwd: '',
     ModelPath: '',
@@ -90,6 +93,7 @@ function fromProfile(p: Profile): FormState {
   return {
     ID: p.ID,
     Kind: (p.Kind as FormState['Kind']) || 'chat',
+    BuildID: (p as any).BuildID || '',
     BinPath: p.BinPath || '',
     BinCwd: p.BinCwd || '',
     ModelPath: p.ModelPath || '',
@@ -116,7 +120,10 @@ function toProfile(f: FormState): Profile {
   const p = new main.Profile({
     ID: f.ID.trim(),
     Kind: f.Kind,
-    BinPath: f.BinPath.trim(),
+    BuildID: f.BuildID.trim(),
+    // build_id and bin_path are mutually exclusive in the UI: when a build
+    // is picked, the manual path is dropped (and vice-versa).
+    BinPath: f.BuildID.trim() ? '' : f.BinPath.trim(),
     BinCwd: f.BinCwd.trim(),
     ModelPath: f.ModelPath.trim(),
     MMProjPath: f.MMProjPath.trim(),
@@ -146,7 +153,7 @@ function validate(f: FormState, mode: Mode): string | null {
       return 'ID must be alphanumeric (dash/underscore allowed) and start with a letter or digit.';
     }
   }
-  if (!f.BinPath) return 'Binary path is required.';
+  if (!f.BuildID && !f.BinPath) return 'Pick a build or set a llama-server binary path.';
   if (!f.ModelPath) return 'Model path is required.';
   if (f.Port < 1 || f.Port > 65535) return 'Port must be between 1 and 65535.';
   return null;
@@ -155,10 +162,14 @@ function validate(f: FormState, mode: Mode): string | null {
 export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved }: ProfileFormProps) {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [builds, setBuilds] = useState<main.Build[]>([]);
 
   useEffect(() => {
     if (!opened) return;
     setForm(initial && mode === 'edit' ? fromProfile(initial) : emptyForm());
+    ListBuilds()
+      .then((bs) => setBuilds(bs ?? []))
+      .catch(() => setBuilds([]));
   }, [opened, mode, initial]);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
@@ -251,16 +262,42 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
 
         <Divider label="Binary & model" labelPosition="left" />
 
-        <PathField
-          label="llama-server binary"
-          value={form.BinPath}
-          onChange={(v) => update('BinPath', v)}
-          onBrowse={() =>
-            browseFile('Pick llama-server binary', 'llama-server', '*', 'BinPath')
-          }
-          icon="file"
-          required
+        <Select
+          label="Build"
+          description="Use a llama.cpp Build managed on this tab, or pick “manual path” to point at a binary directly."
+          data={[
+            { value: '', label: '— manual binary path —' },
+            ...builds.map((b) => ({
+              value: b.ID,
+              label: b.DisplayName || b.ID,
+            })),
+          ]}
+          value={form.BuildID}
+          onChange={(v) => update('BuildID', v ?? '')}
+          allowDeselect={false}
+          searchable={builds.length > 6}
         />
+        {form.BuildID ? (
+          <Text size="xs" c="dimmed" mt={-8}>
+            Launch binary resolved from build{' '}
+            <code>{form.BuildID}</code>
+            {(() => {
+              const b = builds.find((x) => x.ID === form.BuildID);
+              return b ? ` → ${b.BinaryPath}` : ' (not found — rebuild it on this tab)';
+            })()}
+          </Text>
+        ) : (
+          <PathField
+            label="llama-server binary"
+            value={form.BinPath}
+            onChange={(v) => update('BinPath', v)}
+            onBrowse={() =>
+              browseFile('Pick llama-server binary', 'llama-server', '*', 'BinPath')
+            }
+            icon="file"
+            required
+          />
+        )}
         <PathField
           label="Working directory (optional)"
           value={form.BinCwd}

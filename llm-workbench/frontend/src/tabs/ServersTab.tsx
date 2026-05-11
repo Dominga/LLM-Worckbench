@@ -19,6 +19,7 @@ import {
   emptyInstanceStatus,
   emptyInstanceMetrics,
 } from '../shell/types';
+import { BuildsPanel } from '../components/BuildsPanel';
 
 type Kind = 'chat' | 'embed' | 'rerank' | 'all';
 
@@ -577,6 +578,9 @@ export function ServersTab({
           </div>
         )}
       </div>
+
+      {/* Builds (M5) — recipes + compiled binaries, below the profile list. */}
+      <BuildsPanel />
     </div>
   );
 }
