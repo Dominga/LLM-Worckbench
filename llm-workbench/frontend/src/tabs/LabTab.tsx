@@ -1,11 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
+import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  Decoration,
+  DecorationSet,
+  ViewPlugin,
+  ViewUpdate,
+} from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
 import { markdown } from '@codemirror/lang-markdown';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { notifications } from '@mantine/notifications';
+import {
+  TextInput,
+  Textarea,
+  Select,
+  TagsInput,
+  ColorInput,
+  Switch,
+  ActionIcon,
+  Button,
+  Group,
+  Stack,
+  Text,
+} from '@mantine/core';
 import {
   IconPlayerPlay,
   IconDeviceFloppy,
@@ -14,6 +36,7 @@ import {
   IconRefresh,
   IconCode,
   IconLayoutSidebar,
+  IconX,
 } from '@tabler/icons-react';
 import { V5 } from '../theme';
 import { Mode, ModeParam, Project } from '../shell/types';
@@ -25,10 +48,72 @@ import {
   RunScript,
   ListModes,
   LoadModeTemplate,
-  SaveModeTemplate,
+  SaveMode,
   PreviewModeTemplate,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
+
+// ── {{placeholder}} highlighting for the mode-template editor ──
+const modePlaceholderRe = /\{\{[^}]*\}\}/g;
+const modePlaceholderMark = Decoration.mark({ class: 'cm-mode-ph' });
+const modePlaceholderTheme = EditorView.theme({
+  '.cm-mode-ph': { color: '#fbbf24', fontWeight: '600' },
+});
+function buildPlaceholderDecos(view: EditorView): DecorationSet {
+  try {
+    const b = new RangeSetBuilder<Decoration>();
+    const text = view.state.doc.toString();
+    modePlaceholderRe.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = modePlaceholderRe.exec(text))) {
+      if (m[0].length === 0) break;
+      b.add(m.index, m.index + m[0].length, modePlaceholderMark);
+    }
+    return b.finish();
+  } catch {
+    return Decoration.none;
+  }
+}
+const modePlaceholderHighlighter = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = buildPlaceholderDecos(view);
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged) this.decorations = buildPlaceholderDecos(u.view);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
+type ModeDef = {
+  name: string;
+  color: string;
+  desc: string;
+  approval: string;
+  context: string;
+  toolWhitelist: string[];
+  params: ModeParam[];
+};
+const emptyModeDef = (): ModeDef => ({
+  name: '',
+  color: '#3b82f6',
+  desc: '',
+  approval: 'always',
+  context: 'rag-explicit',
+  toolWhitelist: [],
+  params: [],
+});
+const KNOWN_TOOLS = ['search_semantic', 'read_file', 'list_files', 'edit_file'];
+function coerceParamDefault(type: string, v: any): any {
+  if (type === 'int' || type === 'number') {
+    const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
+    return Number.isFinite(n) ? (type === 'int' ? Math.trunc(n) : n) : 0;
+  }
+  if (type === 'bool') return v === true || v === 'true' || v === '1';
+  return v == null ? '' : String(v);
+}
 
 type SubTab = 'modes' | 'scripts';
 
@@ -141,6 +226,16 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
   const [paramVals, setParamVals] = useState<Record<string, any>>({});
   const [preview, setPreview] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [def, setDef] = useState<ModeDef>(emptyModeDef());
+
+  const updateDef = (patch: Partial<ModeDef>) => {
+    setDef((d) => ({ ...d, ...patch }));
+    setDirty(true);
+  };
+  const updateParam = (i: number, patch: Partial<ModeParam>) => {
+    setDef((d) => ({ ...d, params: d.params.map((p, j) => (j === i ? { ...p, ...patch } : p)) }));
+    setDirty(true);
+  };
 
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
@@ -173,9 +268,20 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
     if (!selectedId) return;
     (async () => {
       try {
-        const body = await LoadModeTemplate(activeProject.ID, selectedId);
-        setTemplate(body || '');
+        const body = (await LoadModeTemplate(activeProject.ID, selectedId)) || '';
+        setTemplate(body);
         setDirty(false);
+        // Push directly into CM6 too — the [template] effect should also
+        // do this, but doing it here removes any mount-order ambiguity.
+        const v = editorViewRef.current;
+        if (v && v.state.doc.toString() !== body) {
+          programmaticRef.current = true;
+          try {
+            v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: body } });
+          } finally {
+            programmaticRef.current = false;
+          }
+        }
         // Seed param form from mode.params defaults.
         const m = modes.find((x) => x.id === selectedId);
         const seeded: Record<string, any> = {};
@@ -183,6 +289,19 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
           seeded[p.name] = p.default ?? paramTypeDefault(p.type);
         });
         setParamVals(seeded);
+        setDef(
+          m
+            ? {
+                name: m.name ?? '',
+                color: m.color ?? '#3b82f6',
+                desc: (m as any).desc ?? '',
+                approval: (m as any).approval ?? 'always',
+                context: (m as any).context ?? 'rag-explicit',
+                toolWhitelist: (((m as any).toolWhitelist ?? []) as string[]).slice(),
+                params: (((m as any).params ?? []) as ModeParam[]).map((p) => ({ ...p })),
+              }
+            : emptyModeDef(),
+        );
       } catch (e: any) {
         notifications.show({ color: 'red', title: 'Load template failed', message: String(e?.message ?? e) });
       }
@@ -201,6 +320,8 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
         highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         markdown(),
+        modePlaceholderHighlighter,
+        modePlaceholderTheme,
         oneDark,
         EditorView.lineWrapping,
         EditorView.updateListener.of((u) => {
@@ -262,7 +383,27 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
     if (!selectedId) return;
     setSaving(true);
     try {
-      await SaveModeTemplate(activeProject.ID, selectedId, templateRef.current);
+      const m = new main.Mode({
+        name: def.name.trim() || selectedId,
+        color: def.color || '#3b82f6',
+        desc: def.desc,
+        approval: def.approval,
+        context: def.context,
+        toolWhitelist: def.toolWhitelist,
+        params: def.params
+          .filter((p) => p.name.trim() !== '')
+          .map(
+            (p) =>
+              new main.ModeParam({
+                name: p.name.trim(),
+                type: p.type || 'string',
+                default: coerceParamDefault(p.type || 'string', p.default),
+                required: !!p.required,
+                description: (p as any).description ?? '',
+              }),
+          ),
+      });
+      await SaveMode(activeProject.ID, selectedId, m, templateRef.current);
       setDirty(false);
       await refreshModes();
       notifications.show({ color: 'teal', title: 'Saved', message: selectedId });
@@ -369,8 +510,150 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
               onSave();
             }
           }}
-          style={{ flex: 1, overflow: 'auto', minHeight: 0 }}
+          style={{ flex: '3 1 0', overflow: 'auto', minHeight: 0 }}
         />
+        {/* Mode definition form (B8) — name / color / desc / approval / context / tools / params. */}
+        <div
+          style={{
+            flex: '2 1 0',
+            overflow: 'auto',
+            minHeight: 0,
+            borderTop: `1px solid ${V5.border}`,
+            background: V5.surface,
+            padding: 12,
+          }}
+        >
+          {!selectedId ? (
+            <Text size="xs" c="dimmed">
+              Pick a mode to edit its settings.
+            </Text>
+          ) : (
+            <Stack gap="xs">
+              <Group gap="xs" grow align="flex-end">
+                <TextInput
+                  size="xs"
+                  label="Name"
+                  value={def.name}
+                  onChange={(e) => updateDef({ name: e.currentTarget.value })}
+                />
+                <ColorInput
+                  size="xs"
+                  label="Color"
+                  value={def.color}
+                  onChange={(v) => updateDef({ color: v })}
+                  format="hex"
+                  withEyeDropper={false}
+                />
+              </Group>
+              <Textarea
+                size="xs"
+                label="Description"
+                autosize
+                minRows={1}
+                maxRows={3}
+                value={def.desc}
+                onChange={(e) => updateDef({ desc: e.currentTarget.value })}
+              />
+              <Group gap="xs" grow>
+                <Select
+                  size="xs"
+                  label="Approval"
+                  data={['always', 'snapshot', 'auto']}
+                  value={def.approval}
+                  onChange={(v) => updateDef({ approval: v ?? 'always' })}
+                  allowDeselect={false}
+                />
+                <Select
+                  size="xs"
+                  label="Context"
+                  data={['none', 'rag-auto', 'rag-explicit']}
+                  value={def.context}
+                  onChange={(v) => updateDef({ context: v ?? 'rag-explicit' })}
+                  allowDeselect={false}
+                />
+              </Group>
+              <TagsInput
+                size="xs"
+                label="Tool whitelist"
+                description={`Empty = no tools. Known: ${KNOWN_TOOLS.join(', ')}`}
+                value={def.toolWhitelist}
+                onChange={(v) => updateDef({ toolWhitelist: v })}
+                data={KNOWN_TOOLS}
+                splitChars={[' ', ',']}
+              />
+              <div>
+                <Group justify="space-between" mb={4}>
+                  <Text size="xs" fw={600}>
+                    Params
+                  </Text>
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    leftSection={<IconPlus size={11} />}
+                    onClick={() => {
+                      setDef((d) => ({
+                        ...d,
+                        params: [...d.params, { name: '', type: 'string', default: '', required: false, description: '' } as ModeParam],
+                      }));
+                      setDirty(true);
+                    }}
+                  >
+                    add
+                  </Button>
+                </Group>
+                {def.params.length === 0 && (
+                  <Text size="xs" c="dimmed">
+                    No params declared.
+                  </Text>
+                )}
+                {def.params.map((p, i) => (
+                  <Group key={i} gap={4} wrap="nowrap" mb={4} align="flex-end">
+                    <TextInput
+                      size="xs"
+                      placeholder="name"
+                      value={p.name}
+                      onChange={(e) => updateParam(i, { name: e.currentTarget.value })}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    <Select
+                      size="xs"
+                      data={['string', 'int', 'number', 'bool']}
+                      value={p.type || 'string'}
+                      onChange={(v) => updateParam(i, { type: (v as ModeParam['type']) || 'string' })}
+                      allowDeselect={false}
+                      w={86}
+                    />
+                    <TextInput
+                      size="xs"
+                      placeholder="default"
+                      value={p.default == null ? '' : String(p.default)}
+                      onChange={(e) => updateParam(i, { default: e.currentTarget.value })}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    <Switch
+                      size="xs"
+                      label="req"
+                      labelPosition="left"
+                      checked={!!p.required}
+                      onChange={(e) => updateParam(i, { required: e.currentTarget.checked })}
+                    />
+                    <ActionIcon
+                      size="sm"
+                      color="red"
+                      variant="subtle"
+                      onClick={() => {
+                        setDef((d) => ({ ...d, params: d.params.filter((_, j) => j !== i) }));
+                        setDirty(true);
+                      }}
+                    >
+                      <IconX size={13} />
+                    </ActionIcon>
+                  </Group>
+                ))}
+              </div>
+            </Stack>
+          )}
+        </div>
       </div>
 
       {/* Params + preview */}

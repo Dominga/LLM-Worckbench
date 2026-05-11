@@ -29,6 +29,7 @@ import {
   ChatCancel,
   WriteProjectFile,
   SearchProject,
+  ListModes,
 } from '../../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
@@ -173,8 +174,22 @@ export function ChatTab({
   useEffect(() => {
     setModeId(sessionModeId);
   }, [sessionModeId]);
+  // Full mode list (builtin + global ~/.config + project-local) — the
+  // static MODES const is just the bootstrap fallback. Without this the
+  // picker only ever shows the builtin `chat`.
+  const [modes, setModes] = useState<Mode[]>(MODES);
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = (await ListModes(activeProject?.ID ?? '')) as Mode[];
+        if (list && list.length > 0) setModes(list);
+      } catch {
+        /* keep the static fallback */
+      }
+    })();
+  }, [activeProject?.ID]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const mode: Mode = MODE_BY_ID[modeId] || MODES[0];
+  const mode: Mode = modes.find((m) => m.id === modeId) || MODE_BY_ID[modeId] || MODES[0];
 
   const setMode = (id: string) => {
     setModeId(id);
@@ -523,6 +538,7 @@ export function ChatTab({
             <ModePill mode={mode} open={pickerOpen} onToggle={() => setPickerOpen((o) => !o)}>
               {pickerOpen && (
                 <ModePicker
+                  modes={modes}
                   modeId={modeId}
                   onSelect={setMode}
                   onClose={() => setPickerOpen(false)}
@@ -1357,10 +1373,12 @@ function ModePill({
 }
 
 function ModePicker({
+  modes,
   modeId,
   onSelect,
   onClose,
 }: {
+  modes: Mode[];
   modeId: string;
   onSelect: (id: string) => void;
   onClose: () => void;
@@ -1396,7 +1414,7 @@ function ModePicker({
         >
           Session mode
         </div>
-        {MODES.map((m) => {
+        {modes.map((m) => {
           const sel = m.id === modeId;
           return (
             <button

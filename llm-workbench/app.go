@@ -209,7 +209,10 @@ func (a *App) LoadModeTemplate(projectID, modeID string) (string, error) {
 	}
 	path, err := a.modes.TemplatePath(projectID, m)
 	if err != nil {
-		return "", err
+		// Template referenced but not found anywhere (project / global /
+		// absolute) — hand back an empty buffer so the editor lets the
+		// user create it; saving will materialise a project-local copy.
+		return "", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -263,6 +266,22 @@ func (a *App) SaveModeTemplate(projectID, modeID, content string) error {
 		return err
 	}
 	return nil
+}
+
+// SaveMode writes a project-local mode override: the definition
+// (`<project>/.llm-workshop/modes/<modeID>.toml` — name/color/desc/tools/
+// approval/context/params) plus its prompt template
+// (`<modeID>.system.md`). Promotes a builtin/global mode into a
+// project-owned copy. Used by the Prompt-Lab mode editor.
+func (a *App) SaveMode(projectID, modeID string, def Mode, template string) error {
+	if a.projects == nil {
+		return fmt.Errorf("project service unavailable")
+	}
+	p, err := a.projects.Get(projectID)
+	if err != nil {
+		return err
+	}
+	return saveProjectModeFile(p.Path, modeID, def, template)
 }
 
 // PreviewModeTemplate renders the supplied source (unsaved buffer)

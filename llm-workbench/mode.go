@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -33,12 +34,12 @@ const (
 // gates the user before applying changes.
 //
 //   - always   — every write call pops a modal showing the diff; user
-//                must accept or reject. Safest, slowest.
+//     must accept or reject. Safest, slowest.
 //   - snapshot — the loop runs `git add -A && git commit` before
-//                starting; writes go through unattended; user can
-//                `revert` afterwards. Fast, recoverable.
+//     starting; writes go through unattended; user can
+//     `revert` afterwards. Fast, recoverable.
 //   - auto     — no gate. Only legal for read-only modes (whitelist
-//                excludes `edit_file`). Asserted at mode-load time.
+//     excludes `edit_file`). Asserted at mode-load time.
 type ApprovalPolicy string
 
 const (
@@ -51,10 +52,10 @@ const (
 //
 //   - none         — plain chat, no RAG, no tool block.
 //   - rag-auto     — runs `search_semantic` implicitly on every turn,
-//                    pre-loads top-K hits as a system message.
+//     pre-loads top-K hits as a system message.
 //   - rag-explicit — RAG only fires when the model calls
-//                    `search_semantic` itself (or the user types
-//                    `/search`). Default for tool-using modes.
+//     `search_semantic` itself (or the user types
+//     `/search`). Default for tool-using modes.
 type ContextStrategy string
 
 const (
@@ -387,9 +388,9 @@ func (s *ModeService) ResolveSystemPrompt(projectID string, m Mode, params map[s
 }
 
 // loadTemplate resolves a relative template path against (in order):
-//   1. `<projectRoot>/.llm-workshop/modes/<value>`
-//   2. `<globalModesDir>/<value>`
-//   3. absolute path (when value is already absolute)
+//  1. `<projectRoot>/.llm-workshop/modes/<value>`
+//  2. `<globalModesDir>/<value>`
+//  3. absolute path (when value is already absolute)
 //
 // Absolute and project-rooted paths are accepted as-is. Used for both
 // the mode's SystemPromptTemplate field and any future include/import.
@@ -460,15 +461,17 @@ func (s *ModeService) TemplatePath(projectID string, m Mode) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
+	// Only return a candidate that actually exists. Returning a missing
+	// project-local path here is wrong for callers that read it: a global
+	// mode would resolve to a non-existent <project>/.llm-workshop path and
+	// LoadModeTemplate would hand back an empty buffer even though the
+	// template sits in the global dir.
 	if s.projects != nil && projectID != "" {
 		if p, err := s.projects.Get(projectID); err == nil {
 			candidate := filepath.Join(p.Path, ProjectDirName, "modes", path)
 			if _, statErr := os.Stat(candidate); statErr == nil {
 				return candidate, nil
 			}
-			// Project candidate even if missing — SaveModeTemplate will
-			// create it.
-			return candidate, nil
 		}
 	}
 	if g := globalModesDir(); g != "" {
@@ -498,4 +501,102 @@ func renderTemplate(template string, ctx map[string]any) string {
 		}
 		return fmt.Sprintf("%v", v)
 	})
+}
+
+// ─────────────────────── project mode persistence ───────────────────
+
+// modeIDRe constrains mode IDs (= the .toml/.system.md basename) so the
+// editor can't write outside the project's modes dir.
+var modeIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// modeParamDoc / modeFileDoc are the on-disk shapes for a project-local
+// mode file. Distinct from Mode/ModeParam so the encoder can use
+// `omitempty` (a nil `any` default would otherwise make the TOML encoder
+// choke). Field layout matches ModeParam so a plain conversion works.
+type modeParamDoc struct {
+	Name        string `toml:"name"`
+	Type        string `toml:"type"`
+	Default     any    `toml:"default,omitempty"`
+	Required    bool   `toml:"required,omitempty"`
+	Description string `toml:"description,omitempty"`
+}
+
+type modeFileDoc struct {
+	Name                 string `toml:"name,omitempty"`
+	Color                string `toml:"color,omitempty"`
+	Desc                 string `toml:"desc,omitempty"`
+	SystemPromptTemplate string `toml:"system_prompt_template,omitempty"`
+	// tool_whitelist is intentionally NOT omitempty: an empty array means
+	// "no tools" and must survive the round-trip (omitting it would load
+	// back as nil = "all tools").
+	ToolWhitelist []string       `toml:"tool_whitelist"`
+	Params        []modeParamDoc `toml:"params,omitempty"`
+	Approval      string         `toml:"approval,omitempty"`
+	Context       string         `toml:"context,omitempty"`
+}
+
+// atomicWriteFile writes data to path via a temp file + rename.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// saveProjectModeFile writes a project-local mode override under
+// <projectRoot>/.llm-workshop/modes/: <id>.toml (the definition) plus
+// <id>.system.md (the prompt template). Used by the Prompt-Lab mode
+// editor; promotes builtin/global modes into a project-owned copy. The
+// template path is normalised to "<id>.system.md" regardless of what the
+// source mode used.
+func saveProjectModeFile(projectRoot, modeID string, def Mode, template string) error {
+	id := strings.TrimSpace(modeID)
+	if !modeIDRe.MatchString(id) {
+		return fmt.Errorf("invalid mode id %q", modeID)
+	}
+	def.ID = id
+	def.Source = ""
+	def.Plugin = ""
+	def.SystemPrompt = "" // template-backed from now on
+	def.SystemPromptTemplate = id + ".system.md"
+	def.normalise()
+	if err := def.validate(); err != nil {
+		return err
+	}
+
+	dir := filepath.Join(projectRoot, ProjectDirName, "modes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := atomicWriteFile(filepath.Join(dir, def.SystemPromptTemplate), []byte(template), 0o644); err != nil {
+		return err
+	}
+
+	doc := modeFileDoc{
+		Name:                 def.Name,
+		Color:                def.Color,
+		Desc:                 def.Desc,
+		SystemPromptTemplate: def.SystemPromptTemplate,
+		ToolWhitelist:        def.ToolWhitelist,
+		Approval:             string(def.Approval),
+		Context:              string(def.Context),
+	}
+	if doc.ToolWhitelist == nil {
+		doc.ToolWhitelist = []string{}
+	}
+	for _, p := range def.Params {
+		doc.Params = append(doc.Params, modeParamDoc(p))
+	}
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = "  "
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("encode mode %q: %w", id, err)
+	}
+	return atomicWriteFile(filepath.Join(dir, id+".toml"), buf.Bytes(), 0o644)
 }

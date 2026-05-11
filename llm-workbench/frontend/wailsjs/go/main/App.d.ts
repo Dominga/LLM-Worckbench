@@ -112,6 +112,8 @@ export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.Ag
 
 export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
 
+export function SaveMode(arg1:string,arg2:string,arg3:main.Mode,arg4:string):Promise<void>;
+
 export function SaveModeTemplate(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveScript(arg1:string,arg2:string,arg3:string):Promise<main.ScriptFile>;

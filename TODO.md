@@ -62,31 +62,67 @@ Bugs / improvements on top of M1, before M2 (RAG) starts.
 
 **Files:** `supervisor.go`, `frontend/src/App.tsx`, `frontend/src/tabs/ServersTab.tsx`.
 
-### B7 — Modes from settings don't show in the chat window
+### B7 — Modes from settings don't show in the chat window ✓ done
 
-**Is:** modes configured in settings (global `~/.config/llm-workbench/modes/*.toml`
-and/or project-local) are not offered in the chat window's mode picker /
-`NewSessionModal`. Only builtins appear.
+**Was:** the in-chat `ModePicker` (`ChatTab.tsx`) rendered from the static
+`MODES` const, which after the M4 builtin-trim holds only `chat` — so global
+(`~/.config/llm-workbench/modes/*.toml`) and project-local modes never appeared
+in the session mode switcher. (`NewSessionModal` already fetched `ListModes`;
+`ModeService.List` already merged builtin+global+project — only the chat-window
+picker was stuck on the static list.)
 
-**Should be:** `NewSessionModal` (and any in-chat mode switcher) lists the merged
-builtin + global + project modes — the same set the Prompt Lab `ModesPanel` shows.
+**Fix:** `ChatTab` fetches `ListModes(activeProject?.ID ?? '')` into state
+(static `MODES` as the bootstrap fallback), resolves the active session's mode
+from that list, and passes it to `ModePicker` (now `modes`-driven).
+`Sidebar`'s per-session mode dot still uses `MODE_BY_ID` and will show the
+`chat` colour for non-builtin modes — minor cosmetic nit, follow-up.
 
-**Files:** `frontend/src/components/NewSessionModal.tsx`, mode-list binding
-(`ListModes`), `mode.go`/`mode_service.go` (verify global dir is merged in the
-path the chat flow uses).
+### B8 — Modes are read-only on the Prompts (Prompt Lab) tab ✓ done
 
-### B8 — Modes are read-only on the Prompts (Prompt Lab) tab
+**Was:** the Prompt-Lab mode editor only edited the *system-prompt template*
+(and `SaveModeTemplate` errored for the builtin `chat`, which has no template).
+The mode *definition* (tools / approval / params / name / color / context)
+couldn't be touched from the UI.
 
-**Is:** the Prompts/Prompt Lab tab can display a mode's template but edits don't
-stick — modes are effectively view-only there.
+**Fix (backend):** `saveProjectModeFile(projectRoot, modeID, def Mode, template)`
+in `mode.go` writes a project-local override — `<project>/.llm-workshop/modes/
+<id>.toml` (the definition, via a dedicated `modeFileDoc`/`modeParamDoc` shape
+so `omitempty` handles nil param defaults; `tool_whitelist` kept non-omitempty
+so an empty list survives as "no tools") plus `<id>.system.md` (the template);
+the template path is normalised to `<id>.system.md` and any inline
+`system_prompt` dropped. Promotes builtin/global modes into a project-owned copy.
+`modeIDRe` blocks path traversal. App binding `SaveMode(projectID, modeID, def,
+template)`. Tests: round-trip through `loadModesDir` (metadata/params/whitelist
+preserved, int default comes back as int64, inline prompt dropped); overwrite;
+empty-whitelist survives; bad IDs (`""`, `../evil`, `a/b`, `with space`,
+`.hidden`) rejected.
 
-**Should be:** edit existing modes from the Prompts tab; saving a builtin/global
-mode writes a project-local override (per PR27's intent). Verify
-`SaveModeTemplate` is wired to the editor's save action and that the editor isn't
-mounted read-only.
+**Fix (frontend, `LabTab.tsx` `ModesPanel`):** the editor column is now split —
+top: the CM6 markdown prompt editor with `{{…}}` placeholder highlighting (a
+`ViewPlugin` + `EditorView.theme` decoration); bottom: a Mantine form for the
+mode definition (name, color `ColorInput`, description, approval/context
+`Select`s, tool-whitelist `TagsInput` seeded with the known tool names, and a
+param repeater — name / type / default / required / remove). One Save calls
+`SaveMode` with the def + template; backend validation errors (e.g.
+`approval=auto` + `edit_file`) surface as a toast. Right rail (param-value form
++ live preview) unchanged.
 
-**Files:** `frontend/src/tabs/LabTab.tsx` (`ModesPanel`), `SaveModeTemplate`
-binding.
+Note: a `{{user_input}}`-style substitution isn't added — the system prompt is
+built before the user's turn, so there's nothing to substitute; the `{{…}}`
+highlighting covers `{{param.*}}` / `{{project.*}}` either way.
+
+**Follow-up fix (prompt editor showed empty for global modes):** `ModeService.
+TemplatePath` had a "return the project-local candidate even if it doesn't
+exist" early-return — so for a *global* mode (template lives in
+`~/.config/llm-workbench/modes/`) it resolved to a non-existent
+`<project>/.llm-workshop/modes/<x>.system.md`, and `LoadModeTemplate` then
+returned an empty string (the preview was fine because `ResolveSystemPrompt` →
+`loadTemplate` does project-*then-global*-then-error). Fixed: `TemplatePath`
+only returns a candidate that exists, falling through project → global →
+absolute. `LoadModeTemplate` on a still-unresolved template now returns an empty
+buffer (so the editor lets you create it) instead of erroring. The Prompt-Lab
+load effect also pushes the loaded text straight into the CM6 view, and the
+`{{…}}` decoration builder is wrapped so it can't break view construction.
 
 ## Milestone 4 — Scripting + Prompt Lab
 
