@@ -91,6 +91,7 @@ func (a *App) startup(ctx context.Context) {
 		a.indexes = NewIndexRegistry(prs)
 		a.indexer = NewFileIndexer(prs, a.indexes)
 		a.indexer.Attach(ctx)
+		a.files.AttachIndexer(a.indexer) // auto-reindex on every WriteFile (TD2)
 	}
 	if a.indexes != nil {
 		a.embedder = NewEmbeddingService(pm, a.registry, a.indexes)
@@ -818,20 +819,9 @@ func (a *App) WriteProjectFile(projectID, relPath, content string) error {
 	if a.files == nil {
 		return fmt.Errorf("file service not initialized")
 	}
-	if err := a.files.WriteFile(projectID, relPath, content); err != nil {
-		return err
-	}
-	// Keep the RAG index fresh without a manual rebuild (TD2): re-sync this
-	// one file in the background. Best-effort — the save itself succeeded, so
-	// an indexing hiccup is logged, not surfaced.
-	if a.indexer != nil {
-		go func() {
-			if _, _, err := a.indexer.ReindexFile(projectID, relPath); err != nil && a.ctx != nil {
-				wruntime.LogWarningf(a.ctx, "auto-reindex %s/%s: %v", projectID, relPath, err)
-			}
-		}()
-	}
-	return nil
+	// FileService.WriteFile triggers the background auto-reindex (TD2) — covers
+	// this binding plus the agent's edit_file tool and scripts.
+	return a.files.WriteFile(projectID, relPath, content)
 }
 
 // ──────────────────────────── System metrics ───────────────────────

@@ -213,6 +213,17 @@ func (fx *FileIndexer) ReindexFile(projectID, relPath string) (added, removed in
 	return added, removed, nil
 }
 
+// ReindexFileBG runs ReindexFile in a background goroutine, logging (rather
+// than returning) any error. Use from write paths that must not block on
+// indexing — editor save, agent `edit_file`, scripts.
+func (fx *FileIndexer) ReindexFileBG(projectID, relPath string) {
+	go func() {
+		if _, _, err := fx.ReindexFile(projectID, relPath); err != nil && fx.ctx != nil {
+			wruntime.LogWarningf(fx.ctx, "auto-reindex %s/%s: %v", projectID, relPath, err)
+		}
+	}()
+}
+
 // emitProgress fires a Wails event so the UI can render a live counter.
 // `currentPath` is the file currently being processed (empty when the
 // pass is finished). No-op if Attach hasn't been called.

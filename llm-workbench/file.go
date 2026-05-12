@@ -36,11 +36,17 @@ const maxReadBytes = 5 * 1024 * 1024 // 5 MB
 // (..//etc/passwd, symlinks pointing outside) return an error.
 type FileService struct {
 	projects *ProjectService
+	indexer  *FileIndexer // optional — set via AttachIndexer; drives auto-reindex on write
 }
 
 func NewFileService(ps *ProjectService) *FileService {
 	return &FileService{projects: ps}
 }
+
+// AttachIndexer wires the FileIndexer so every successful WriteFile (editor
+// save, agent `edit_file`, scripts) triggers a background per-file reindex,
+// keeping the RAG index fresh without a manual rebuild (TD2).
+func (fsrv *FileService) AttachIndexer(fi *FileIndexer) { fsrv.indexer = fi }
 
 // resolveSafe returns the absolute filesystem path for `relPath` inside
 // the given project, or an error if the path tries to escape the root.
@@ -209,6 +215,9 @@ func (fsrv *FileService) WriteFile(projectID, relPath, content string) error {
 	if err := os.Rename(tmp, abs); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("rename: %w", err)
+	}
+	if fsrv.indexer != nil {
+		fsrv.indexer.ReindexFileBG(projectID, relPath)
 	}
 	return nil
 }
