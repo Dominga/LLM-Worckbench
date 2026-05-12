@@ -465,28 +465,34 @@ export default function App() {
   // ensureSession is called from ChatTab right before Send. If a project
   // is open but no session is selected yet, create one quietly with a
   // default title so the user's first message gets persisted to JSONL.
+  // `modeId` is the mode currently selected in the chat picker — the
+  // auto-created session must adopt it, otherwise picking e.g. "Agent"
+  // before the first message would silently fall back to "chat" (no tools).
   // Returns the resolved Session, or null when no project context exists
   // (caller falls back to one-shot ChatStream).
-  const ensureSession = useCallback(async (): Promise<Session | null> => {
-    const cur = sessions.find((s) => s.id === activeSessionId);
-    if (cur) return cur;
-    if (!activeProject) return null;
-    try {
-      const sess = await CreateSession(
-        activeProject.ID,
-        'New chat',
-        'chat',
-        activeProfileId,
-      );
-      const list = await ListSessions(activeProject.ID);
-      setSessions(list);
-      setActiveSessionId(sess.id);
-      return sess;
-    } catch (e: any) {
-      notifications.show({ color: 'red', title: 'Create session failed', message: String(e) });
-      return null;
-    }
-  }, [sessions, activeSessionId, activeProject, activeProfileId]);
+  const ensureSession = useCallback(
+    async (modeId?: string): Promise<Session | null> => {
+      const cur = sessions.find((s) => s.id === activeSessionId);
+      if (cur) return cur;
+      if (!activeProject) return null;
+      try {
+        const sess = await CreateSession(
+          activeProject.ID,
+          'New chat',
+          modeId && modeId.trim() ? modeId : 'chat',
+          activeProfileId,
+        );
+        const list = await ListSessions(activeProject.ID);
+        setSessions(list);
+        setActiveSessionId(sess.id);
+        return sess;
+      } catch (e: any) {
+        notifications.show({ color: 'red', title: 'Create session failed', message: String(e) });
+        return null;
+      }
+    },
+    [sessions, activeSessionId, activeProject, activeProfileId],
+  );
 
   const onSelectSession = (id: string) => {
     setActiveSessionId(id);

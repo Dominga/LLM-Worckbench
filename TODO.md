@@ -52,6 +52,22 @@ shape), `paths.go` (`settingsPath()`), app bindings, a `SettingsModal` /
 
 ### Chat / UI
 
+#### TD24 — Tool modes are inert in a project-unbound chat
+
+A project-less chat (no project open — TD22) sends through the one-shot
+`ChatStream` path, which ignores the session mode entirely. So picking Agent /
+Auto-edit / Research from the chat-window mode picker does nothing — and all the
+builtin tools (`read_file`, `list_files`, `search_semantic`, `edit_file`) are
+project-scoped anyway, so they couldn't run regardless. The picker should hide
+tool-enabled modes (or disable them with a "open a project to use tools" hint)
+when `activeProject == null`. Alternatively, route project-less chat through the
+agent loop too (with an empty tool registry) so a system-prompt-only mode still
+applies — but the seeded modes all carry tool whitelists, so hiding them is the
+simpler fix for v1.
+
+**Files:** `frontend/src/tabs/ChatTab.tsx` (mode picker filter), maybe
+`chat.go` (decide whether `StartStream` should honour a mode at all).
+
 #### TD7 — Inline file autocomplete when chat is hidden (future, low priority)
 
 Once TD6 lands and the chat side can be hidden, give the file editor a
@@ -180,6 +196,7 @@ drift. Acceptable for v1; TD21 closes it.)
 - **B6** — Logs cleared on each Start + Copy-logs button. `supervisor.go`, `App.tsx`, `ServersTab.tsx`.
 - **B7** — Modes from settings now show in the chat-window picker (`ChatTab` fetches `ListModes`). 
 - **B8** — Modes editable on the Prompt Lab tab (`SaveMode(projectID, modeID, def, template)` writes project-local override; `LabTab` `ModesPanel` def form). `mode.go`, `LabTab.tsx`.
+- **B10** — Tool modes inert: `App.ensureSession()` hard-coded the new session's mode as `chat`, so the first message in a project (the common path post-TD22, which starts session-less) always created a `chat` session no matter what the picker showed → `StartSessionStream` → no `tools[]`. Fix: `ensureSession(modeId?)` adopts the picker's mode; `ChatTab.send()` passes it. (Project-unbound chat still ignores the mode — see TD24.) `frontend/src/App.tsx`, `frontend/src/shell/MainPane.tsx`, `frontend/src/tabs/ChatTab.tsx`.
 
 ### Tech debt
 

@@ -68,7 +68,7 @@ export type ChatTabProps = {
   onChangeSessionMode: (modeId: string) => void;
   onAfterChat: () => Promise<void>;
   onCreateSession: () => void;
-  ensureSession: () => Promise<Session | null>;
+  ensureSession: (modeId?: string) => Promise<Session | null>;
   onOpenFilePath: (path: string, range?: { startByte: number; endByte: number }) => void;
   // A /search hit click: scroll the file editor to this byte range + flash it.
   // `nonce` makes re-clicking the same hit re-fire. (TD8)
@@ -466,7 +466,10 @@ export function ChatTab({
     // in JSONL on disk — no "you forgot to click +" foot-gun.
     let sessionForSend = activeSession;
     if (activeProject && !sessionForSend) {
-      sessionForSend = await ensureSession();
+      // Carry the picker's current mode into the auto-created session so
+      // tool-enabled modes (Agent / Auto-edit / Research) actually run their
+      // loop on the first message instead of silently defaulting to "chat".
+      sessionForSend = await ensureSession(modeId);
     }
 
     const userMsg: ChatMessage = { id: rid(), role: 'user', content: userText };

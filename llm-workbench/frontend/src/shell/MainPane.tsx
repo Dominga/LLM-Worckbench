@@ -30,7 +30,7 @@ export type MainPaneProps = {
   activeSession: Session | null;
   activeSessionMessages: SessionMessageBackend[];
   sysMetrics: SysMetricsPayload | null;
-  ensureSession: () => Promise<Session | null>;
+  ensureSession: (modeId?: string) => Promise<Session | null>;
   onSelectProfile: (id: string) => void;
   onStart: (id: string) => void;
   onStop: (id: string) => void;
