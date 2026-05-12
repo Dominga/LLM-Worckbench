@@ -10,7 +10,6 @@ import {
   RestartProfile,
   DeleteProfile,
   ListProjects,
-  CurrentProject as GetCurrentProject,
   OpenProject,
   CreateProject,
   SetActiveProject,
@@ -184,12 +183,15 @@ export default function App() {
 
   // ───────────────────────── projects load ────────────────────────────
 
+  // Only refreshes the project *list* (the Recent menu). The active project
+  // is NOT auto-restored on startup — the app opens on a blank, project-unbound
+  // chat; a project is loaded only when the user explicitly picks one (TD22).
+  // The backend still persists `active_project_id`, left for a future
+  // "reopen last project" setting (TD23).
   const reloadProjects = useCallback(async () => {
     try {
       const list = await ListProjects();
       setProjects(list);
-      const cur = await GetCurrentProject();
-      setActiveProject(cur && cur.ID ? cur : null);
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Project load failed', message: String(e) });
     }

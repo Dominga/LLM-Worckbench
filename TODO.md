@@ -38,25 +38,6 @@ subs + poll effects), `supervisor.go` (log/status emit cadence).
 
 ### App lifecycle / settings
 
-#### TD22 — Start with a blank, project-unbound chat
-
-On launch the app should open an empty chat **not bound to any project** — no
-project auto-loaded, no index opened. A project is loaded only when the user
-explicitly picks one (Project menu → Open / Recent). Chat without a project still
-works (chat-only mode, no RAG / no agent file tools); selecting a project later
-attaches it to the session.
-
-- Don't auto-restore the last project on startup; keep "Recent" in the menu.
-- Chat / agent code paths must tolerate `activeProject == null` (RAG tools and
-  the file pane disabled until a project is attached — partly already true for
-  `/search` without an embed profile).
-- Decide whether an in-flight chat session can be "promoted" by attaching a
-  project mid-conversation, or whether attaching starts a fresh session.
-
-**Files:** `frontend/src/App.tsx` (startup effect, project state), `app.go` /
-`project.go` (no eager project load on startup), `frontend/src/tabs/ChatTab.tsx`
-(null-project handling).
-
 #### TD23 — Global app settings (behaviour config)
 
 A general application-settings surface (the Settings gear in the TitleBar is a
@@ -259,6 +240,7 @@ drift. Acceptable for v1; TD21 closes it.)
 ### Tech debt
 
 - **TD5** — Duplicate window controls (native + custom). `Frameless: true` in `main.go`; the V5 `TitleBar` is now the OS drag region (`--wails-draggable: drag`, interactive children `no-drag`). Frameless on GTK also drops native edge-resize, so `shell/ResizeFrame.tsx` adds invisible edge/corner drag strips (Linux only — Windows/macOS keep native resize) that drive `WindowSetSize`/`WindowSetPosition`. Linux/webkit2_41 verified; Windows pending (see B9). Possible HiDPI-scaling caveat in the JS resize math — revisit if it feels off on a scaled display. `main.go`, `frontend/src/shell/TitleBar.tsx`, `frontend/src/shell/ResizeFrame.tsx`, `frontend/src/App.tsx`.
+- **TD22** — Start on a blank, project-unbound chat. `App.tsx` no longer auto-restores the last project on startup (`reloadProjects` refreshes only the Recent list); the backend still persists `active_project_id` for a future "reopen last" toggle (TD23). Project-less chat already worked via `ChatStream` (ephemeral, non-persisted) — fixed `ChatTab`'s hydrate effect so a stream-done re-run doesn't wipe it (`prevSessionIdRef`/`prevProjectIdRef`: only reset `messages` on session-leave or project-switch). Empty-state + header copy updated. Open sub-question (promote an ephemeral chat into a project session vs. start fresh): current behaviour clears the ephemeral transcript when a project is opened. Agent modes still need a project — picking one without a project will surface a tool error; acceptable for v1. `frontend/src/App.tsx`, `frontend/src/tabs/ChatTab.tsx`.
 - **TD6** — Resizable chat ↔ file split + collapsible chat side. `ChatTab` got a drag-resize divider (double-click = hide chat), a "collapse chat" button in the chat header (shown when a file is open), a collapsed-chat rail mirroring the preview rail to restore it, and `{filePaneWidth, chatOpen, panelOpen}` persisted per project in `localStorage` (`llmwb:chatLayout:<projectId>`). `frontend/src/tabs/ChatTab.tsx`.
 - **TD16** — Mode `system_prompt_template` (path + placeholders) — done in PR25.
 - **TD17** — Prompt Lab as the mode-template editor — done in PR27.

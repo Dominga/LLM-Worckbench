@@ -115,8 +115,26 @@ export function ChatTab({
   // (delta handler appends to `last.role === 'assistant'`).
   // refreshActiveSession() in App.tsx fires after `chat:done`, by which
   // point streaming=false and we hydrate the canonical version.
+  const prevSessionIdRef = useRef<string | undefined>(activeSession?.id);
+  const prevProjectIdRef = useRef<string | undefined>(activeProject?.ID);
   useEffect(() => {
     if (streaming) return;
+    const sid = activeSession?.id;
+    const pid = activeProject?.ID;
+    const projectChanged = prevProjectIdRef.current !== pid;
+    prevProjectIdRef.current = pid;
+    if (!sid) {
+      // Project-unbound / pre-session chat: the transcript lives only in
+      // local state (TD22). Clear it when we just left a session or switched
+      // project — never on a plain stream-done re-run (which would wipe an
+      // in-flight ephemeral chat, since activeSessionMessages stays []).
+      if (projectChanged || prevSessionIdRef.current !== undefined) {
+        prevSessionIdRef.current = undefined;
+        setMessages([]);
+      }
+      return;
+    }
+    prevSessionIdRef.current = sid;
     setMessages(
       activeSessionMessages.map((m, i) => {
         let toolCalls: ToolCallChip[] | undefined;
@@ -147,7 +165,7 @@ export function ChatTab({
         };
       }),
     );
-  }, [activeSession?.id, activeSessionMessages, streaming]);
+  }, [activeProject?.ID, activeSession?.id, activeSessionMessages, streaming]);
 
   // Right pane (Edit / Preview). Mounted only when a project file is
   // selected — chat-only sessions don't get a phantom scratch pane.
@@ -619,7 +637,7 @@ export function ChatTab({
               }}
               title={activeSession?.title || 'No active session'}
             >
-              {activeSession?.title || (activeProject ? 'No active session' : 'Open a project')}
+              {activeSession?.title || (activeProject ? 'No active session' : 'Chat')}
             </h1>
             <button style={snapshotBtnStyle} disabled title="Snapshot — M3">
               <IconGitBranch size={11} /> Snapshot
@@ -684,7 +702,7 @@ export function ChatTab({
                 }}
               >
                 {!activeProject ? (
-                  'Open a project from the title-bar menu to start chatting.'
+                  'Type a prompt below to start chatting. Open a project from the title-bar menu to enable files, sessions and RAG.'
                 ) : !activeSession ? (
                   <>
                     No active session.{' '}
