@@ -69,7 +69,10 @@ export type ChatTabProps = {
   onAfterChat: () => Promise<void>;
   onCreateSession: () => void;
   ensureSession: () => Promise<Session | null>;
-  onOpenFilePath: (path: string) => void;
+  onOpenFilePath: (path: string, range?: { startByte: number; endByte: number }) => void;
+  // A /search hit click: scroll the file editor to this byte range + flash it.
+  // `nonce` makes re-clicking the same hit re-fire. (TD8)
+  revealRequest: { startByte: number; endByte: number; nonce: number } | null;
 };
 
 export function ChatTab({
@@ -88,6 +91,7 @@ export function ChatTab({
   onCreateSession,
   ensureSession,
   onOpenFilePath,
+  revealRequest,
 }: ChatTabProps) {
   const healthy = activeStatus.healthy;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -342,6 +346,27 @@ export function ChatTab({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilePath, activeFileContent]);
+
+  // /search hit reveal: the file-content effect above runs first (child editor
+  // effect, then this parent's effects), so by now the doc is loaded. Open the
+  // preview pane, switch to the editor view, and scroll to + flash the chunk.
+  // Retries across a few frames in case the editor was only just mounted. (TD8)
+  useEffect(() => {
+    if (!revealRequest || !activeFilePath) return;
+    const { startByte, endByte } = revealRequest;
+    setPanelOpen(true);
+    setView('edit');
+    let frames = 0;
+    const tick = () => {
+      if (editorRef.current) {
+        editorRef.current.revealByteRange(startByte, endByte);
+        return;
+      }
+      if (frames++ < 30) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(tick));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealRequest?.nonce]);
 
   // Re-render every 5s so the "saved Xs ago" footer label ticks forward
   // without a heavy timer in the body of every keystroke handler.
@@ -819,7 +844,7 @@ export function ChatTab({
                   {searchHits.map((h, i) => (
                     <button
                       key={`${h.path}-${h.chunkId}-${i}`}
-                      onClick={() => onOpenFilePath(h.path)}
+                      onClick={() => onOpenFilePath(h.path, { startByte: h.startByte, endByte: h.endByte })}
                       style={{
                         textAlign: 'left',
                         background: V5.bg,
@@ -1207,7 +1232,7 @@ export function ChatTab({
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <div style={{ height: '100%', display: view === 'edit' ? 'block' : 'none' }}>
               <MarkdownEditor
-                initialDoc=""
+                initialDoc={activeFilePath ? activeFileContent : ''}
                 onReady={(h) => {
                   editorRef.current = h;
                 }}

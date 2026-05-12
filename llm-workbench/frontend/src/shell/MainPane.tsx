@@ -41,7 +41,8 @@ export type MainPaneProps = {
   onChangeSessionMode: (modeId: string) => void;
   onAfterChat: () => Promise<void>;
   onCreateSession: () => void;
-  onOpenFilePath: (path: string) => void;
+  onOpenFilePath: (path: string, range?: { startByte: number; endByte: number }) => void;
+  revealRequest: { startByte: number; endByte: number; nonce: number } | null;
 };
 
 export function MainPane(props: MainPaneProps) {
@@ -84,6 +85,7 @@ export function MainPane(props: MainPaneProps) {
           onCreateSession={props.onCreateSession}
           ensureSession={props.ensureSession}
           onOpenFilePath={props.onOpenFilePath}
+          revealRequest={props.revealRequest}
         />
       </div>
       <div

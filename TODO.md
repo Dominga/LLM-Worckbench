@@ -60,22 +60,6 @@ Copilot-style inline completion bound to the active chat profile
 debounced, dismissable with Esc, accepted with Tab. Wait for the M3 agent loop
 prompt-routing pipeline to settle first.
 
-#### TD8 — /search hit click should scroll to the chunk
-
-Clicking a hit opens the file via `onOpenFilePath` but lands at the top. The hit
-carries `startByte`/`endByte` already; thread them down to the editor.
-
-- Extend `onOpenFilePath` (or add `onOpenFileAt(path, startByte, endByte)`) to
-  carry byte offsets.
-- In `Editor` (CM6), convert byte offset → char position (UTF-8 walk), dispatch
-  `EditorView.scrollIntoView(EditorSelection.range(start, end))` after content
-  load. Optional fading `Decoration.mark` highlight (~2 s).
-- Preview pane: anchor scroll to the corresponding offset in rendered HTML — more
-  involved, can be deferred.
-
-**Files:** `frontend/src/components/Editor.tsx`, `frontend/src/tabs/ChatTab.tsx`
-(hit click handler), `frontend/src/App.tsx` (`onOpenFilePath` signature).
-
 #### TD11 — Send button stuck disabled after agent tool call (partial fix landed)
 
 **Fixed so far:** (1) `chat.go` wraps the session-stream goroutine in `defer {
@@ -209,6 +193,7 @@ drift. Acceptable for v1; TD21 closes it.)
 ### Tech debt
 
 - **TD5** — Duplicate window controls (native + custom). `Frameless: true` in `main.go`; the V5 `TitleBar` is now the OS drag region (`--wails-draggable: drag`, interactive children `no-drag`). Frameless on GTK also drops native edge-resize, so `shell/ResizeFrame.tsx` adds invisible edge/corner drag strips (Linux only — Windows/macOS keep native resize) that drive `WindowSetSize`/`WindowSetPosition`. Linux/webkit2_41 verified; Windows pending (see B9). Possible HiDPI-scaling caveat in the JS resize math — revisit if it feels off on a scaled display. `main.go`, `frontend/src/shell/TitleBar.tsx`, `frontend/src/shell/ResizeFrame.tsx`, `frontend/src/App.tsx`.
+- **TD8** — /search hit click scrolls to the chunk. `onOpenFilePath(path, range?)` now carries the hit's byte range; App passes it to ChatTab as a `revealRequest` (nonce so re-clicking re-fires). `EditorHandle.revealByteRange` converts byte→char (UTF-8 walk), `scrollIntoView({y:'center'})`, sets the selection, and flashes a `Decoration.mark` (`.cm-search-flash` fade, ~1.8s) cleared via timeout. ChatTab's reveal effect opens the preview pane + switches to the editor view + retries across frames until the editor handle exists. Preview-pane scroll-to-offset still deferred. `frontend/src/components/Editor.tsx`, `frontend/src/tabs/ChatTab.tsx`, `frontend/src/App.tsx`, `frontend/src/shell/MainPane.tsx`, `frontend/src/style.css`.
 - **TD9** — Markdown in chat bubbles. Assistant text now renders sanitized HTML via the Go `RenderMarkdown` binding (`AssistantMarkdown` sub-component; plain-text fallback while the render is in flight / while streaming). `.chat-md` styles in `style.css` (tighter than `.md-preview`). User bubbles stay verbatim; tool-call chips still overlay. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
 - **TD10** — Reasoning / activity visualisation. `<think>…</think>` spans (Qwen3/R1) are pulled out by `splitThinking` (streaming-safe — handles partial open/close tags) and shown as a `ThinkingBlock` disclosure: auto-expanded with a dots loader while the model reasons, auto-collapses once the answer starts (user can pin it open). Empty live bubble shows a pulsing `<Loader type="dots">` instead of a static `…`. Tool-call chips (PR21) already cover the per-tool activity strip. `<think>` is left in the JSONL — re-parsed on reload. **Not done:** token-throughput pill in the bubble (t/s still only in the title bar) — pick up if wanted. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
 - **TD22** — Start on a blank, project-unbound chat. `App.tsx` no longer auto-restores the last project on startup (`reloadProjects` refreshes only the Recent list); the backend still persists `active_project_id` for a future "reopen last" toggle (TD23). Project-less chat already worked via `ChatStream` (ephemeral, non-persisted) — fixed `ChatTab`'s hydrate effect so a stream-done re-run doesn't wipe it (`prevSessionIdRef`/`prevProjectIdRef`: only reset `messages` on session-leave or project-switch). Empty-state + header copy updated. Open sub-question (promote an ephemeral chat into a project session vs. start fresh): current behaviour clears the ephemeral transcript when a project is opened. Agent modes still need a project — picking one without a project will surface a tool error; acceptable for v1. `frontend/src/App.tsx`, `frontend/src/tabs/ChatTab.tsx`.

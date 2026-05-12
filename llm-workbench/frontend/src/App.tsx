@@ -70,6 +70,13 @@ export default function App() {
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string>('');
   const [activeFileContent, setActiveFileContent] = useState<string>('');
+  // A pending "scroll the editor to this byte range" request (from a /search
+  // hit click). `nonce` makes re-clicking the same hit re-trigger. (TD8)
+  const [revealRequest, setRevealRequest] = useState<{
+    startByte: number;
+    endByte: number;
+    nonce: number;
+  } | null>(null);
   const fileTreeIntervalRef = useRef<number | null>(null);
 
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -560,6 +567,7 @@ export default function App() {
       const fc = await ReadProjectFile(activeProject.ID, node.path);
       setActiveFilePath(node.path);
       setActiveFileContent(fc.content);
+      setRevealRequest(null);
       if (fc.truncated) {
         notifications.show({
           color: 'yellow',
@@ -572,15 +580,22 @@ export default function App() {
     }
   };
 
-  // onOpenFilePath is the path-only flavour used by /search hits and
-  // future ad-hoc openers. Mirrors onSelectFile but skips the FileNode
-  // shape (search results don't carry isDir / size).
-  const onOpenFilePath = async (path: string) => {
+  // onOpenFilePath is the path-only flavour used by /search hits, tool-call
+  // chips and future ad-hoc openers. Mirrors onSelectFile but skips the
+  // FileNode shape. An optional byte range (from a /search hit) is forwarded
+  // to ChatTab → the editor scrolls to + flashes that chunk (TD8).
+  const onOpenFilePath = async (
+    path: string,
+    range?: { startByte: number; endByte: number },
+  ) => {
     if (!activeProject || !path) return;
     try {
       const fc = await ReadProjectFile(activeProject.ID, path);
       setActiveFilePath(path);
       setActiveFileContent(fc.content);
+      setRevealRequest(
+        range ? { startByte: range.startByte, endByte: range.endByte, nonce: Date.now() } : null,
+      );
       if (fc.truncated) {
         notifications.show({
           color: 'yellow',
@@ -671,6 +686,7 @@ export default function App() {
           onCreateSession={onCreateSession}
           ensureSession={ensureSession}
           onOpenFilePath={onOpenFilePath}
+          revealRequest={revealRequest}
         />
       </div>
 
