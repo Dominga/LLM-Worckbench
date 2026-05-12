@@ -10,6 +10,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
+import { Loader } from '@mantine/core';
 import { V5 } from '../theme';
 import {
   MODES,
@@ -31,6 +32,7 @@ import {
   WriteProjectFile,
   SearchProject,
   ListModes,
+  RenderMarkdown,
 } from '../../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
@@ -727,11 +729,16 @@ export function ChatTab({
                 )}
               </div>
             )}
-            {messages.map((m) =>
+            {messages.map((m, idx) =>
               m.role === 'user' ? (
                 <UserBubble key={m.id} m={m} />
               ) : (
-                <AssistantBubble key={m.id} m={m} onOpenFilePath={onOpenFilePath} />
+                <AssistantBubble
+                  key={m.id}
+                  m={m}
+                  live={streaming && idx === messages.length - 1}
+                  onOpenFilePath={onOpenFilePath}
+                />
               ),
             )}
             <div ref={messagesEndRef} />
@@ -1374,13 +1381,89 @@ function UserBubble({ m }: { m: ChatMessage }) {
   );
 }
 
+// Pull a `<think>…</think>` reasoning span out of an assistant message.
+// Handles the streaming case where the closing tag (or even the opening one)
+// hasn't fully arrived yet. (TD10 — Qwen3 / DeepSeek-R1 style reasoning.)
+function splitThinking(
+  content: string,
+  live: boolean,
+): { thinking: string; answer: string; thinkingDone: boolean } {
+  // Mid-stream: the first chars might be a partial "<think>" — don't flash it.
+  if (live && content.trim() && '<think>'.startsWith(content.trimStart())) {
+    return { thinking: '', answer: '', thinkingDone: false };
+  }
+  const open = content.indexOf('<think>');
+  if (open === -1) return { thinking: '', answer: content, thinkingDone: true };
+  const before = content.slice(0, open);
+  const rest = content.slice(open + '<think>'.length);
+  const close = rest.indexOf('</think>');
+  const stripPartialTag = (s: string) => (live ? s.replace(/<\/?[a-z]*$/i, '') : s);
+  if (close === -1) {
+    return { thinking: stripPartialTag(rest), answer: before, thinkingDone: false };
+  }
+  const thinking = rest.slice(0, close);
+  const after = rest.slice(close + '</think>'.length);
+  return { thinking, answer: stripPartialTag((before + after).replace(/^\s+/, '')), thinkingDone: true };
+}
+
+// Renders assistant text as sanitized HTML via the Go markdown renderer
+// (render.go). Plain-text fallback until the render returns / if it errors.
+function AssistantMarkdown({ content }: { content: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!content.trim()) {
+      setHtml('');
+      return;
+    }
+    RenderMarkdown(content)
+      .then((r) => {
+        if (!cancelled) setHtml(r.html);
+      })
+      .catch(() => {
+        if (!cancelled) setHtml(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [content]);
+  if (html === null) return <div style={{ whiteSpace: 'pre-wrap' }}>{content}</div>;
+  if (html === '') return null;
+  return <div className="chat-md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function ThinkingBlock({ text, done, live }: { text: string; done: boolean; live: boolean }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  // Auto-expanded while the model is actively reasoning; collapses once the
+  // answer starts (or the stream ends) unless the user pinned it open.
+  const expanded = open ?? (live && !done);
+  return (
+    <div className="chat-think">
+      <button className="chat-think-toggle" onClick={() => setOpen(!expanded)}>
+        <IconChevronRight
+          size={11}
+          style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}
+        />
+        <span>💭 Thinking{!done ? '…' : ''}</span>
+        {!done && <Loader type="dots" size="xs" color={V5.textDim} />}
+      </button>
+      {expanded && <div className="chat-think-body">{text.trim() || ' '}</div>}
+    </div>
+  );
+}
+
 function AssistantBubble({
   m,
+  live,
   onOpenFilePath,
 }: {
   m: ChatMessage;
+  live: boolean;
   onOpenFilePath: (path: string) => void;
 }) {
+  const { thinking, answer, thinkingDone } = splitThinking(m.content, live);
+  const hasChips = !!m.toolCalls && m.toolCalls.length > 0;
+  const hasAnswer = answer.trim().length > 0;
   return (
     <div style={{ display: 'flex', gap: 10 }}>
       <div
@@ -1398,20 +1481,25 @@ function AssistantBubble({
       >
         <IconSparkles size={11} />
       </div>
-      <div
-        style={{
-          flex: 1,
-          fontSize: 13.5,
-          lineHeight: 1.65,
-          paddingTop: 2,
-          whiteSpace: 'pre-wrap',
-          minHeight: 18,
-        }}
-      >
-        {m.content || <span style={{ color: V5.textDim, fontStyle: 'italic' }}>…</span>}
-        {m.toolCalls && m.toolCalls.length > 0 && (
-          <ToolCallChips calls={m.toolCalls} onOpenFilePath={onOpenFilePath} />
+      <div style={{ flex: 1, fontSize: 13.5, lineHeight: 1.65, paddingTop: 2, minHeight: 18 }}>
+        {thinking && <ThinkingBlock text={thinking} done={thinkingDone} live={live} />}
+        {hasAnswer &&
+          (live ? (
+            <div style={{ whiteSpace: 'pre-wrap' }}>{answer}</div>
+          ) : (
+            <AssistantMarkdown content={answer} />
+          ))}
+        {/* No answer yet: live stream → pulsing dots; settled empty msg → ellipsis. */}
+        {!hasAnswer && !thinking && (
+          live ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: V5.textDim }}>
+              <Loader type="dots" size="sm" color={V5.accent} />
+            </span>
+          ) : (
+            <span style={{ color: V5.textDim, fontStyle: 'italic' }}>…</span>
+          )
         )}
+        {hasChips && <ToolCallChips calls={m.toolCalls!} onOpenFilePath={onOpenFilePath} />}
       </div>
     </div>
   );

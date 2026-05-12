@@ -69,6 +69,49 @@ body {
   padding: 4px 8px;
 }
 
+/* Markdown inside chat bubbles — tighter than the file preview (TD9) */
+.chat-md { color: #dcddde; }
+.chat-md > :first-child { margin-top: 0; }
+.chat-md > :last-child { margin-bottom: 0; }
+.chat-md p { margin: 0.5em 0; }
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5 {
+  margin: 0.8em 0 0.3em; font-size: 1.05em; border: none; padding: 0; font-weight: 600;
+}
+.chat-md ul, .chat-md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.chat-md li { margin: 0.15em 0; }
+.chat-md li > ul, .chat-md li > ol { margin: 0.1em 0; }
+.chat-md code {
+  background: #2b2d31; padding: 1px 5px; border-radius: 3px;
+  font-size: 0.9em; font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+.chat-md pre {
+  background: #16171a; padding: 10px 12px; border-radius: 5px; overflow: auto;
+  margin: 0.5em 0; border: 1px solid #2a2c30;
+}
+.chat-md pre code { background: transparent; padding: 0; font-size: 0.88em; line-height: 1.45; }
+.chat-md blockquote {
+  border-left: 3px solid #33353b; margin: 0.5em 0; padding-left: 12px; color: #8e9298;
+}
+.chat-md a { color: #6c98ff; }
+.chat-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.95em; }
+.chat-md th, .chat-md td { border: 1px solid #33353b; padding: 3px 8px; }
+.chat-md hr { border: none; border-top: 1px solid #33353b; margin: 0.8em 0; }
+.chat-md img { max-width: 100%; }
+
+/* "Thinking" / reasoning disclosure in chat (TD10) */
+.chat-think { margin: 0 0 8px; }
+.chat-think-toggle {
+  background: transparent; border: none; color: #8e9298; cursor: pointer;
+  font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 0;
+}
+.chat-think-toggle:hover { color: #dcddde; }
+.chat-think-body {
+  white-space: pre-wrap; color: #8e9298; background: #16171a;
+  border: 1px solid #2a2c30; border-radius: 6px; padding: 8px 10px; margin-top: 4px;
+  max-height: 280px; overflow: auto;
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11.5px; line-height: 1.5;
+}
+
 /* Pulse for running status pills (Servers tab) */
 @keyframes v5pulse {
   0%, 100% { opacity: 1; }

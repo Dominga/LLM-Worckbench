@@ -76,37 +76,6 @@ carries `startByte`/`endByte` already; thread them down to the editor.
 **Files:** `frontend/src/components/Editor.tsx`, `frontend/src/tabs/ChatTab.tsx`
 (hit click handler), `frontend/src/App.tsx` (`onOpenFilePath` signature).
 
-#### TD9 — Chat bubbles must render markdown
-
-Assistant messages render as plain text — fenced code, lists, bold/italic, links
-show raw. Backend already has a `Renderer` (`render.go`, sanitized HTML, used by
-the file Preview pane) — reuse it for chat.
-
-- ChatTab message list: pipe `assistant` content through `RenderMarkdown`
-  (existing binding) into the bubble's HTML; for streaming deltas re-render on
-  each delta tick (debounce ~50 ms) or render on `chat:done`.
-- Keep `user` bubbles plain text (verbatim).
-- Tool-call chips (PR21) overlay the rendered HTML, not stripped.
-- Safety: renderer already runs through bluemonday; no raw-HTML passthrough.
-
-**Files:** `frontend/src/tabs/ChatTab.tsx`, maybe a tiny `MarkdownBubble` helper.
-
-#### TD10 — Visualise model thinking / long-running activity
-
-When the model "thinks" silently (Qwen3 `<think>…</think>` blocks, or a slow tool
-call) the chat looks frozen — no spinner, no token counter. Mockups V1–V4 in
-`Design/`.
-
-- Inline "thinking" bubble — render `<think>` content collapsed, expandable.
-  Strip from the saved JSONL or store under a `reasoning_content` field.
-- Activity strip below the bubble: "🔧 read_file(path=README.md)…" via the
-  existing `agent:tool:request/result:<streamId>` events; live tool-call counter.
-- Token-throughput pill (per-profile TPS is already tracked in the supervisor).
-- Pulse/shimmer on the empty assistant bubble until the first delta arrives.
-
-**Files:** `frontend/src/tabs/ChatTab.tsx`, `render.go` (if `<think>` stripping
-is needed).
-
 #### TD11 — Send button stuck disabled after agent tool call (partial fix landed)
 
 **Fixed so far:** (1) `chat.go` wraps the session-stream goroutine in `defer {
@@ -240,6 +209,8 @@ drift. Acceptable for v1; TD21 closes it.)
 ### Tech debt
 
 - **TD5** — Duplicate window controls (native + custom). `Frameless: true` in `main.go`; the V5 `TitleBar` is now the OS drag region (`--wails-draggable: drag`, interactive children `no-drag`). Frameless on GTK also drops native edge-resize, so `shell/ResizeFrame.tsx` adds invisible edge/corner drag strips (Linux only — Windows/macOS keep native resize) that drive `WindowSetSize`/`WindowSetPosition`. Linux/webkit2_41 verified; Windows pending (see B9). Possible HiDPI-scaling caveat in the JS resize math — revisit if it feels off on a scaled display. `main.go`, `frontend/src/shell/TitleBar.tsx`, `frontend/src/shell/ResizeFrame.tsx`, `frontend/src/App.tsx`.
+- **TD9** — Markdown in chat bubbles. Assistant text now renders sanitized HTML via the Go `RenderMarkdown` binding (`AssistantMarkdown` sub-component; plain-text fallback while the render is in flight / while streaming). `.chat-md` styles in `style.css` (tighter than `.md-preview`). User bubbles stay verbatim; tool-call chips still overlay. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
+- **TD10** — Reasoning / activity visualisation. `<think>…</think>` spans (Qwen3/R1) are pulled out by `splitThinking` (streaming-safe — handles partial open/close tags) and shown as a `ThinkingBlock` disclosure: auto-expanded with a dots loader while the model reasons, auto-collapses once the answer starts (user can pin it open). Empty live bubble shows a pulsing `<Loader type="dots">` instead of a static `…`. Tool-call chips (PR21) already cover the per-tool activity strip. `<think>` is left in the JSONL — re-parsed on reload. **Not done:** token-throughput pill in the bubble (t/s still only in the title bar) — pick up if wanted. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
 - **TD22** — Start on a blank, project-unbound chat. `App.tsx` no longer auto-restores the last project on startup (`reloadProjects` refreshes only the Recent list); the backend still persists `active_project_id` for a future "reopen last" toggle (TD23). Project-less chat already worked via `ChatStream` (ephemeral, non-persisted) — fixed `ChatTab`'s hydrate effect so a stream-done re-run doesn't wipe it (`prevSessionIdRef`/`prevProjectIdRef`: only reset `messages` on session-leave or project-switch). Empty-state + header copy updated. Open sub-question (promote an ephemeral chat into a project session vs. start fresh): current behaviour clears the ephemeral transcript when a project is opened. Agent modes still need a project — picking one without a project will surface a tool error; acceptable for v1. `frontend/src/App.tsx`, `frontend/src/tabs/ChatTab.tsx`.
 - **TD6** — Resizable chat ↔ file split + collapsible chat side. `ChatTab` got a drag-resize divider (double-click = hide chat), a "collapse chat" button in the chat header (shown when a file is open), a collapsed-chat rail mirroring the preview rail to restore it, and `{filePaneWidth, chatOpen, panelOpen}` persisted per project in `localStorage` (`llmwb:chatLayout:<projectId>`). `frontend/src/tabs/ChatTab.tsx`.
 - **TD16** — Mode `system_prompt_template` (path + placeholders) — done in PR25.
