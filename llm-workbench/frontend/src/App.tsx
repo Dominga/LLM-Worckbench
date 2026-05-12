@@ -32,6 +32,7 @@ import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import { TitleBar } from './shell/TitleBar';
 import { Sidebar } from './shell/Sidebar';
 import { MainPane } from './shell/MainPane';
+import { ResizeFrame } from './shell/ResizeFrame';
 import {
   Tab,
   SidebarSegment,
@@ -702,6 +703,7 @@ export default function App() {
       />
 
       <ApprovalModal />
+      <ResizeFrame />
     </div>
   );
 }
