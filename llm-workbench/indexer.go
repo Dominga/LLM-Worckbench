@@ -150,6 +150,69 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 	return prog, nil
 }
 
+// ReindexFile re-syncs a single file's chunks against disk — used by the
+// auto-reindex on save (TD2) so RAG search stays fresh without a full rebuild.
+// Returns the chunk delta for that path. A no-op (0, 0, nil) when the path is
+// excluded by the project's `[indexing]` rules; a file that no longer exists on
+// disk has its chunks removed (delete == empty new set).
+func (fx *FileIndexer) ReindexFile(projectID, relPath string) (added, removed int, err error) {
+	if fx.projects == nil || fx.indexes == nil {
+		return 0, 0, errors.New("indexer not wired up (project/index registry missing)")
+	}
+	p, err := fx.projects.Get(projectID)
+	if err != nil {
+		return 0, 0, err
+	}
+	rel := filepath.ToSlash(filepath.Clean(relPath))
+	if rel == "." || rel == "" || strings.HasPrefix(rel, "../") {
+		return 0, 0, nil
+	}
+
+	cfg := readIndexingConfig(p.Path)
+	matcher, err := newGlobMatcher(cfg.Include, cfg.Exclude)
+	if err != nil {
+		return 0, 0, fmt.Errorf("compile glob: %w", err)
+	}
+	if !matcher.fileMatches(rel) {
+		return 0, 0, nil // not an indexed file — nothing to do
+	}
+
+	idx, err := fx.indexes.For(projectID)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	abs := filepath.Join(p.Path, filepath.FromSlash(rel))
+	var content []byte
+	var mtime int64
+	if st, sErr := os.Stat(abs); sErr == nil {
+		mtime = st.ModTime().Unix()
+		content, err = os.ReadFile(abs)
+		if err != nil {
+			return 0, 0, err
+		}
+	} else if !errors.Is(sErr, os.ErrNotExist) {
+		return 0, 0, sErr
+	}
+	// content stays nil when the file is gone → Chunk yields an empty set →
+	// upsertFileChunks removes whatever chunks were stored for the path.
+
+	chunker := &Chunker{TargetChars: cfg.ChunkChars, OverlapChars: cfg.OverlapChars}
+	newChunks := chunker.Chunk(rel, string(content))
+	added, removed, err = upsertFileChunks(idx, rel, mtime, newChunks)
+	if err != nil {
+		return 0, 0, err
+	}
+	if added != 0 || removed != 0 {
+		fx.emitProgress(projectID, IndexProgress{
+			FilesProcessed: 1,
+			ChunksAdded:    added,
+			ChunksRemoved:  removed,
+		}, "")
+	}
+	return added, removed, nil
+}
+
 // emitProgress fires a Wails event so the UI can render a live counter.
 // `currentPath` is the file currently being processed (empty when the
 // pass is finished). No-op if Attach hasn't been called.
