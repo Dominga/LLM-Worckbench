@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -208,15 +207,12 @@ func (si *ServerInstance) Start() error {
 	if si.profile.BinCwd != "" {
 		cmd.Dir = si.profile.BinCwd
 	}
-	// Setpgid: own process group so we can SIGTERM the whole tree on Stop().
-	// Pdeathsig (Linux-only): if our process dies unexpectedly (crash, kill -9,
-	// IDE forces a reload during `wails dev`), the kernel delivers SIGKILL
-	// to the child so we don't leak a 22 GB VRAM-holding subprocess. Build
-	// targets v1 are Linux/Windows; macOS is Future per DESIGN.md §9.
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid:   true,
-		Pdeathsig: syscall.SIGKILL,
-	}
+	// Own process group (so Stop() can take down the whole tree) plus
+	// parent-death cleanup where the OS supports it — see setProcGroup,
+	// split across proc_unix.go / proc_windows.go. Keeps a crash or an
+	// IDE-forced reload during `wails dev` from leaking a VRAM-holding
+	// subprocess.
+	setProcGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -309,11 +305,12 @@ func (si *ServerInstance) Stop() error {
 		si.mu.Unlock()
 		return nil
 	}
-	pid := si.cmd.Process.Pid
+	proc := si.cmd.Process
+	pid := proc.Pid
 	si.stopRequested = true
 	si.mu.Unlock()
 
-	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	terminateTree(proc)
 
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -321,7 +318,7 @@ func (si *ServerInstance) Stop() error {
 		stillRunning := si.cmd != nil && si.cmd.Process != nil && si.cmd.Process.Pid == pid
 		si.mu.Unlock()
 		if stillRunning {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			killTree(proc)
 		}
 	}()
 	return nil

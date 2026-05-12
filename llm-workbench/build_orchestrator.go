@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -129,7 +128,7 @@ func (o *BuildOrchestrator) Cancel(recipeID string) {
 		cancel()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		terminateTree(cmd.Process)
 	}
 }
 
@@ -273,7 +272,7 @@ func (o *BuildOrchestrator) runCmd(ctx context.Context, recipeID, dir, name stri
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.SysProcAttr = procGroupAttr()
+	setProcGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -303,12 +302,12 @@ func (o *BuildOrchestrator) runCmd(ctx context.Context, recipeID, dir, name stri
 		select {
 		case <-ctx.Done():
 			if cmd.Process != nil {
-				pid := cmd.Process.Pid
-				_ = syscall.Kill(-pid, syscall.SIGTERM)
+				proc := cmd.Process
+				terminateTree(proc)
 				select {
 				case <-done:
 				case <-time.After(5 * time.Second):
-					_ = syscall.Kill(-pid, syscall.SIGKILL)
+					killTree(proc)
 				}
 			}
 		case <-done:
@@ -447,18 +446,6 @@ func (o *BuildOrchestrator) persistLog(recipeID, path string) {
 }
 
 // ─────────────────────────── helpers ────────────────────────────────
-
-// procGroupAttr returns SysProcAttr that puts the child in its own process
-// group (so the orchestrator can signal the whole tree) and, on Linux,
-// arranges a SIGKILL if this process dies — same policy as the llama-server
-// supervisor. Build targets v1 are Linux/Windows; macOS is Future.
-func procGroupAttr() *syscall.SysProcAttr {
-	a := &syscall.SysProcAttr{Setpgid: true}
-	if runtime.GOOS == "linux" {
-		a.Pdeathsig = syscall.SIGKILL
-	}
-	return a
-}
 
 func absPath(p string) string {
 	if a, err := filepath.Abs(p); err == nil {
