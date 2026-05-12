@@ -33,7 +33,7 @@ jobs:
         shell: bash
         working-directory: llm-workbench
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux WebKit deps
         if: runner.os == 'Linux'
@@ -41,12 +41,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev pkg-config
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: llm-workbench/go.mod
           cache-dependency-path: llm-workbench/go.sum
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -62,7 +62,7 @@ jobs:
         # gcc on Ubuntu, bundled mingw-w64 on windows-latest. No cross-compiling.
         run: wails build -tags "${{ matrix.tags }}" -platform ${{ matrix.platform }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         # PRs run as a compile check only — no binaries published.
         if: github.event_name != 'pull_request'
         with:
