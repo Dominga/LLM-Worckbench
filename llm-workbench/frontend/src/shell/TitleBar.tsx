@@ -76,6 +76,8 @@ export function TitleBar({
 
   return (
     <div style={titleBarStyle}>
+      {/* Frameless-window grab region (TD5): the whole bar drags the OS window,
+          except interactive children which carry `noDragStyle`. */}
       {/* Brand */}
       <div style={{ width: 56, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <IconBolt size={16} color={V5.accent} />
@@ -92,6 +94,7 @@ export function TitleBar({
               disabled={!enabled}
               title={enabled ? label : `${label} (M1+)`}
               style={{
+                ...noDragStyle,
                 padding: '0 16px',
                 display: 'flex',
                 alignItems: 'center',
@@ -272,7 +275,13 @@ function ProjectMenu({
   );
 }
 
+// Wails frameless drag handling (TD5): default CSSDragProperty is `--wails-draggable`.
+// `drag` on the bar makes it the OS grab region; `no-drag` on a child opts it back out.
+const dragRegionStyle = { '--wails-draggable': 'drag' } as unknown as CSSProperties;
+const noDragStyle = { '--wails-draggable': 'no-drag' } as unknown as CSSProperties;
+
 const titleBarStyle: CSSProperties = {
+  ...dragRegionStyle,
   height: 44,
   background: V5.panel,
   borderBottom: `1px solid ${V5.border}`,
@@ -293,6 +302,7 @@ const statusStripStyle: CSSProperties = {
 };
 
 const projectChipStyle: CSSProperties = {
+  ...noDragStyle,
   display: 'inline-flex',
   alignItems: 'center',
   gap: 5,
@@ -334,6 +344,7 @@ function WinBtn({
     <button
       onClick={onClick}
       style={{
+        ...noDragStyle,
         width: 44,
         height: 44,
         display: 'flex',

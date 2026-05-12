@@ -20,6 +20,9 @@ func main() {
 		Title:  "llm-workbench",
 		Width:  1280,
 		Height: 800,
+		// Frameless: hide the native OS title bar — the in-app TitleBar (V5 shell)
+		// owns window controls + drag region (CSS `--wails-draggable: drag`). See TD5.
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
