@@ -88,3 +88,33 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.binpath }}
           if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: build
+    # Only on tag pushes (v*). PR and manual-dispatch runs stop after build.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: Stage release assets
+        # download-artifact unpacks each artifact into dist/<name>/; flatten
+        # and give the binaries platform-tagged names for the release page.
+        run: |
+          mkdir -p out
+          cp dist/llm-workbench-linux-amd64/llm-workbench       out/llm-workbench-linux-amd64
+          cp dist/llm-workbench-windows-amd64/llm-workbench.exe out/llm-workbench-windows-amd64.exe
+          ls -l out
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: out/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
