@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFile,
+  IconLayoutSidebarLeftCollapse,
   IconSend,
   IconSparkles,
   IconX,
@@ -156,6 +157,94 @@ export function ChatTab({
   const [previewSource, setPreviewSource] = useState('');
   const lastFilePathRef = useRef<string>('');
 
+  // Split layout (TD6): chat (left) ↔ file pane (right). Pane width is
+  // drag-resizable; the chat side is collapsible (mirrors the file-pane rail).
+  // Both persist per project in localStorage.
+  const PANE_MIN = 280;
+  const PANE_DEFAULT = 480;
+  const [chatOpen, setChatOpen] = useState(true);
+  const [filePaneWidth, setFilePaneWidth] = useState(PANE_DEFAULT);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const dragWidthRef = useRef(PANE_DEFAULT);
+  const layoutKey = `llmwb:chatLayout:${activeProject?.ID ?? 'default'}`;
+  const clampPaneWidth = useCallback((w: number) => {
+    const total = containerRef.current?.offsetWidth ?? 1280;
+    return Math.max(PANE_MIN, Math.min(w, Math.max(PANE_MIN + 40, total - 360)));
+  }, []);
+  const persistLayout = useCallback(
+    (patch: Partial<{ filePaneWidth: number; chatOpen: boolean; panelOpen: boolean }>) => {
+      try {
+        localStorage.setItem(
+          layoutKey,
+          JSON.stringify({ filePaneWidth, chatOpen, panelOpen, ...patch }),
+        );
+      } catch {
+        /* localStorage unavailable — ignore */
+      }
+    },
+    [layoutKey, filePaneWidth, chatOpen, panelOpen],
+  );
+  // Load saved layout when the project changes; reset to defaults otherwise.
+  useEffect(() => {
+    let next = { filePaneWidth: PANE_DEFAULT, chatOpen: true, panelOpen: true };
+    try {
+      const raw = localStorage.getItem(layoutKey);
+      if (raw) {
+        const j = JSON.parse(raw) as Partial<typeof next>;
+        if (typeof j.filePaneWidth === 'number') next.filePaneWidth = j.filePaneWidth;
+        if (typeof j.chatOpen === 'boolean') next.chatOpen = j.chatOpen;
+        if (typeof j.panelOpen === 'boolean') next.panelOpen = j.panelOpen;
+      }
+    } catch {
+      /* ignore corrupt entry */
+    }
+    const w = clampPaneWidth(next.filePaneWidth);
+    setFilePaneWidth(w);
+    dragWidthRef.current = w;
+    setChatOpen(next.chatOpen);
+    setPanelOpen(next.panelOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutKey]);
+  // Divider drag → resize the file pane from the right edge of the container.
+  const startPaneDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const onMove = (ev: MouseEvent) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const w = clampPaneWidth(rect.right - ev.clientX);
+        dragWidthRef.current = w;
+        setFilePaneWidth(w);
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        persistLayout({ filePaneWidth: dragWidthRef.current });
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [clampPaneWidth, persistLayout],
+  );
+  // Collapse/restore the chat side. Collapsing forces the file pane open so
+  // the user never ends up with both sides reduced to rails.
+  const toggleChatPane = useCallback(
+    (open: boolean) => {
+      setChatOpen(open);
+      if (!open) {
+        setPanelOpen(true);
+        persistLayout({ chatOpen: false, panelOpen: true });
+      } else {
+        persistLayout({ chatOpen: true });
+      }
+    },
+    [persistLayout],
+  );
+
   // Edit-mode persistence: localContent mirrors the editor; baseContent
   // is the on-disk value last loaded or saved. dirty = mismatch.
   const [localContent, setLocalContent] = useState('');
@@ -207,6 +296,7 @@ export function ChatTab({
   //    clean (don't clobber unsaved edits).
   useEffect(() => {
     if (!activeFilePath) {
+      setChatOpen(true); // no file → chat is the only pane; don't leave it railed
       if (lastFilePathRef.current) {
         lastFilePathRef.current = '';
         setLocalContent('');
@@ -500,8 +590,9 @@ export function ChatTab({
   }, [saveFile]);
 
   return (
-    <div style={{ flex: 1, display: 'flex', minWidth: 0, background: V5.bg }}>
-      {/* LEFT: chat */}
+    <div ref={containerRef} style={{ flex: 1, display: 'flex', minWidth: 0, background: V5.bg }}>
+      {/* LEFT: chat — hidden (railed) only when a file is open and the user collapsed it. */}
+      {(chatOpen || !activeFilePath) && (
       <div
         style={{
           flex: 1,
@@ -533,6 +624,27 @@ export function ChatTab({
             <button style={snapshotBtnStyle} disabled title="Snapshot — M3">
               <IconGitBranch size={11} /> Snapshot
             </button>
+            {activeFilePath && (
+              <button
+                onClick={() => toggleChatPane(false)}
+                title="Collapse chat — focus the file pane"
+                style={{
+                  width: 24,
+                  height: 24,
+                  flex: 'none',
+                  background: 'transparent',
+                  color: V5.textMuted,
+                  border: `1px solid ${V5.borderSoft}`,
+                  borderRadius: 5,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <IconLayoutSidebarLeftCollapse size={14} />
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, fontSize: 11.5, flexWrap: 'wrap' }}>
             <ModePill mode={mode} open={pickerOpen} onToggle={() => setPickerOpen((o) => !o)}>
@@ -878,11 +990,52 @@ export function ChatTab({
           )}
         </div>
       </div>
+      )}
 
-      {/* Collapsed rail — only when a file is open AND user hid the pane. */}
+      {/* Collapsed CHAT rail — file open AND user hid the chat side. */}
+      {activeFilePath && !chatOpen && (
+        <button
+          onClick={() => toggleChatPane(true)}
+          title="Show chat"
+          style={{
+            width: 32,
+            flex: 'none',
+            background: V5.surface2,
+            border: 'none',
+            borderRight: `1px solid ${V5.border}`,
+            cursor: 'pointer',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 10,
+            padding: '14px 0',
+            color: V5.textMuted,
+            fontFamily: 'inherit',
+          }}
+        >
+          <IconChevronRight size={14} />
+          <div
+            style={{
+              writingMode: 'vertical-rl',
+              fontSize: 11,
+              letterSpacing: 0.6,
+              textTransform: 'uppercase',
+              fontFamily: 'ui-monospace, monospace',
+            }}
+          >
+            Chat
+          </div>
+          <IconSparkles size={13} style={{ color: V5.textMuted, marginTop: 'auto' }} />
+        </button>
+      )}
+
+      {/* Collapsed PREVIEW rail — file open AND user hid the preview pane. */}
       {activeFilePath && !panelOpen && (
         <button
-          onClick={() => setPanelOpen(true)}
+          onClick={() => {
+            setPanelOpen(true);
+            persistLayout({ panelOpen: true });
+          }}
           title="Show preview"
           style={{
             width: 32,
@@ -916,12 +1069,30 @@ export function ChatTab({
         </button>
       )}
 
+      {/* Drag-resize divider — only when both panes are visible. */}
+      {activeFilePath && panelOpen && chatOpen && (
+        <div
+          onMouseDown={startPaneDrag}
+          onDoubleClick={() => toggleChatPane(false)}
+          title="Drag to resize · double-click to hide chat"
+          style={{
+            width: 5,
+            flex: 'none',
+            cursor: 'col-resize',
+            background: V5.surface2,
+            borderLeft: `1px solid ${V5.border}`,
+            borderRight: `1px solid ${V5.border}`,
+          }}
+        />
+      )}
+
       {/* RIGHT: edit / preview — only when a project file is open. */}
       {activeFilePath && panelOpen && (
         <div
           style={{
-            width: 480,
-            flex: 'none',
+            width: chatOpen ? filePaneWidth : undefined,
+            flex: chatOpen ? 'none' : 1,
+            minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
@@ -985,7 +1156,11 @@ export function ChatTab({
               ))}
             </div>
             <button
-              onClick={() => setPanelOpen(false)}
+              onClick={() => {
+                setPanelOpen(false);
+                setChatOpen(true);
+                persistLayout({ panelOpen: false, chatOpen: true });
+              }}
               title="Hide panel"
               style={{
                 width: 22,

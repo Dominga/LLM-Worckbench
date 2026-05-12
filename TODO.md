@@ -36,20 +36,40 @@ subs + poll effects), `supervisor.go` (log/status emit cadence).
 
 ## Tech debt / nice-to-have
 
+### App lifecycle / settings
+
+#### TD22 — Start with a blank, project-unbound chat
+
+On launch the app should open an empty chat **not bound to any project** — no
+project auto-loaded, no index opened. A project is loaded only when the user
+explicitly picks one (Project menu → Open / Recent). Chat without a project still
+works (chat-only mode, no RAG / no agent file tools); selecting a project later
+attaches it to the session.
+
+- Don't auto-restore the last project on startup; keep "Recent" in the menu.
+- Chat / agent code paths must tolerate `activeProject == null` (RAG tools and
+  the file pane disabled until a project is attached — partly already true for
+  `/search` without an embed profile).
+- Decide whether an in-flight chat session can be "promoted" by attaching a
+  project mid-conversation, or whether attaching starts a fresh session.
+
+**Files:** `frontend/src/App.tsx` (startup effect, project state), `app.go` /
+`project.go` (no eager project load on startup), `frontend/src/tabs/ChatTab.tsx`
+(null-project handling).
+
+#### TD23 — Global app settings (behaviour config)
+
+A general application-settings surface (the Settings gear in the TitleBar is a
+stub) where app-wide behaviour is configured — e.g. the TD22 startup choice
+(blank chat vs. reopen last project), default mode, theme, telemetry opt-in
+(DESIGN §10.5), etc. Persist to `~/.config/llm-workbench/settings.toml`. Once it
+exists, TD22's "blank on startup" becomes a default that the user can flip.
+
+**Files:** new `settings.go` (`AppSettings` + load/save, mirrors `ProfileManager`
+shape), `paths.go` (`settingsPath()`), app bindings, a `SettingsModal` /
+`SettingsTab` on the frontend.
+
 ### Chat / UI
-
-#### TD6 — Resizable chat ↔ file panes + collapsible chat side
-
-Chat pane is fixed width; only the file pane has a collapse rail.
-
-1. **Drag-resize divider** between chat (left) and file (right) panes. Persist
-   width per-project in localStorage so layouts survive restarts.
-2. **Collapse chat side** — mirror the file-pane behaviour (`activeFilePath &&
-   !panelOpen` shows a thin rail with restore button). Lets the user focus on a
-   file alone.
-
-**Files:** `frontend/src/tabs/ChatTab.tsx` (split layout, divider, collapse
-state), maybe extract a `SplitPane` helper.
 
 #### TD7 — Inline file autocomplete when chat is hidden (future, low priority)
 
@@ -239,5 +259,6 @@ drift. Acceptable for v1; TD21 closes it.)
 ### Tech debt
 
 - **TD5** — Duplicate window controls (native + custom). `Frameless: true` in `main.go`; the V5 `TitleBar` is now the OS drag region (`--wails-draggable: drag`, interactive children `no-drag`). Linux/webkit2_41 verified; Windows pending (see B9). `main.go`, `frontend/src/shell/TitleBar.tsx`.
+- **TD6** — Resizable chat ↔ file split + collapsible chat side. `ChatTab` got a drag-resize divider (double-click = hide chat), a "collapse chat" button in the chat header (shown when a file is open), a collapsed-chat rail mirroring the preview rail to restore it, and `{filePaneWidth, chatOpen, panelOpen}` persisted per project in `localStorage` (`llmwb:chatLayout:<projectId>`). `frontend/src/tabs/ChatTab.tsx`.
 - **TD16** — Mode `system_prompt_template` (path + placeholders) — done in PR25.
 - **TD17** — Prompt Lab as the mode-template editor — done in PR27.
