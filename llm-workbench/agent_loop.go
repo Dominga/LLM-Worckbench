@@ -459,6 +459,16 @@ func (c *ChatService) requestApprovalIfWrite(
 			}
 		}
 	}
+	// make_directory: only the path is meaningful — UI shows "create
+	// directory: <path>" without a diff body.
+	if toolName == "make_directory" {
+		var args struct {
+			Path string `json:"path"`
+		}
+		if uErr := json.Unmarshal(rawArgs, &args); uErr == nil {
+			req.Path = args.Path
+		}
+	}
 	if c.ctx != nil {
 		// Per-stream channel for callers that already filter by streamId.
 		wruntime.EventsEmit(c.ctx, "agent:approval:request:"+streamID, req)

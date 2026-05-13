@@ -2,6 +2,6 @@ name = "Agent"
 color = "#3b82f6"
 desc = "Full toolset. User confirms each write via a diff modal."
 system_prompt_template = "agent.system.md"
-tool_whitelist = ["search_semantic", "read_file", "list_files", "edit_file"]
+tool_whitelist = ["search_semantic", "read_file", "list_files", "edit_file", "make_directory"]
 approval = "always"
 context = "rag-explicit"

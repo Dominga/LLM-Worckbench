@@ -307,11 +307,51 @@ func (editFileTool) Execute(ctx context.Context, ac *AgentContext, args map[stri
 	}, nil
 }
 
-// RegisterBuiltinTools wires the four M3-minimum tools into a registry.
+// makeDirectoryTool wraps FileService.MakeDirectory. Sandboxed identically
+// to edit_file; same approval policy applies.
+type makeDirectoryTool struct{}
+
+func (makeDirectoryTool) Name() string { return "make_directory" }
+func (makeDirectoryTool) Description() string {
+	return "Create a directory in the project (including missing parents, like `mkdir -p`). No-op if the directory already exists. Subject to the active mode's approval policy."
+}
+func (makeDirectoryTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"path"},
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "Project-relative directory path, e.g. world/characters.",
+			},
+		},
+	}
+}
+func (makeDirectoryTool) Execute(ctx context.Context, ac *AgentContext, args map[string]any) (any, error) {
+	if ac == nil || ac.Files == nil {
+		return nil, errors.New("file service unavailable")
+	}
+	path, _ := args["path"].(string)
+	if path == "" {
+		return nil, errors.New("path is required")
+	}
+	created, err := ac.Files.MakeDirectory(ac.ProjectID, path)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"path":    path,
+		"created": created,
+		"ok":      true,
+	}, nil
+}
+
+// RegisterBuiltinTools wires the M3-minimum tools into a registry.
 // Called once at app startup; project-local modes can later add more.
 func RegisterBuiltinTools(reg *ToolRegistry) {
 	reg.Register(searchSemanticTool{})
 	reg.Register(listFilesTool{})
 	reg.Register(readFileTool{})
 	reg.Register(editFileTool{})
+	reg.Register(makeDirectoryTool{})
 }

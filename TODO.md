@@ -159,6 +159,29 @@ Mirror modes: `~/.config/llm-workbench/scripts/` alongside per-project
 `<project>/.llm-workshop/scripts/`, project overrides global by name. Once landed,
 list-merge in `ScriptStore`.
 
+#### TD27 — Chat "debug" mode: show full model exchange
+
+Дебаг-тоггл в чате, при включении бабблы показывают **именно то, что ушло
+модели** и **что пришло сырым**, не сглаженный markdown-вид:
+
+- весь итоговый `messages[]` (system + tools + history + user) — раскрываемый
+  блок перед каждым assistant-ответом, в виде свёрнутого JSON с подсветкой
+  ролей;
+- сырой ответ модели до `splitThinking` / sanitize / markdown-render
+  (включая `<think>`, tool-call JSON, control-tokens);
+- параметры запроса (temperature, top_p, max_tokens, stop, applied template
+  name) — компактным чипом;
+- токен-таймин (TTFT, t/s) — переиспользовать счётчики из заголовка.
+
+Реализация: `chat.go` / `agent_loop.go` уже знают финальный payload — добавить
+событие `chat:debug:<streamId>` с этим payload-ом (только если режим включён,
+иначе не эмитить чтоб не плодить ивенты). На фронте — отдельный
+`DebugPanel` в баббле, скрытый по дефолту, тоггл в шапке чата (или в
+TD23-settings как глобальный default).
+
+**Files:** `chat.go`, `agent_loop.go` (debug-emit gate),
+`frontend/src/tabs/ChatTab.tsx` (тоггл + `DebugPanel`), `frontend/src/style.css`.
+
 #### TD19 — External modes registry + per-mode install
 
 A remote repository of modes users browse and install individually, apt-package
@@ -205,6 +228,7 @@ drift. Acceptable for v1; TD21 closes it.)
 - **TD8** — /search hit click scrolls to the chunk. `onOpenFilePath(path, range?)` now carries the hit's byte range; App passes it to ChatTab as a `revealRequest` (nonce so re-clicking re-fires). `EditorHandle.revealByteRange` converts byte→char (UTF-8 walk), `scrollIntoView({y:'center'})`, sets the selection, and flashes a `Decoration.mark` (`.cm-search-flash` fade, ~1.8s) cleared via timeout. ChatTab's reveal effect opens the preview pane + switches to the editor view + retries across frames until the editor handle exists. Preview-pane scroll-to-offset still deferred. `frontend/src/components/Editor.tsx`, `frontend/src/tabs/ChatTab.tsx`, `frontend/src/App.tsx`, `frontend/src/shell/MainPane.tsx`, `frontend/src/style.css`.
 - **TD9** — Markdown in chat bubbles. Assistant text now renders sanitized HTML via the Go `RenderMarkdown` binding (`AssistantMarkdown` sub-component; plain-text fallback while the render is in flight / while streaming). `.chat-md` styles in `style.css` (tighter than `.md-preview`). User bubbles stay verbatim; tool-call chips still overlay. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
 - **TD10** — Reasoning / activity visualisation. `<think>…</think>` spans (Qwen3/R1) are pulled out by `splitThinking` (streaming-safe — handles partial open/close tags) and shown as a `ThinkingBlock` disclosure: auto-expanded with a dots loader while the model reasons, auto-collapses once the answer starts (user can pin it open). Empty live bubble shows a pulsing `<Loader type="dots">` instead of a static `…`. Tool-call chips (PR21) already cover the per-tool activity strip. `<think>` is left in the JSONL — re-parsed on reload. **Not done:** token-throughput pill in the bubble (t/s still only in the title bar) — pick up if wanted. `frontend/src/tabs/ChatTab.tsx`, `frontend/src/style.css`.
+- **TD26** — Agent tool `make_directory` (mkdir -p semantics, sandbox via `FileService.resolveSafe`, refuses project state dir). Registered in `RegisterBuiltinTools`; added to `agent` + `auto-edit` mode whitelists; gated by approval as a write tool (modal shows "Create directory: <path>" instead of a diff). Existing dir = no-op (`created: false`). `file.go` (`MakeDirectory`), `agent.go` (`makeDirectoryTool`), `approval.go` (`writeTools`), `agent_loop.go` (pre-fill `Path`), `modes/agent.toml` + `agent.system.md` + `auto-edit.toml` + `auto-edit.system.md`, `frontend/src/tabs/ChatTab.tsx` (chip icon + summary), `frontend/src/components/ApprovalModal.tsx` (path-only branch).
 - **TD22** — Start on a blank, project-unbound chat. `App.tsx` no longer auto-restores the last project on startup (`reloadProjects` refreshes only the Recent list); the backend still persists `active_project_id` for a future "reopen last" toggle (TD23). Project-less chat already worked via `ChatStream` (ephemeral, non-persisted) — fixed `ChatTab`'s hydrate effect so a stream-done re-run doesn't wipe it (`prevSessionIdRef`/`prevProjectIdRef`: only reset `messages` on session-leave or project-switch). Empty-state + header copy updated. Open sub-question (promote an ephemeral chat into a project session vs. start fresh): current behaviour clears the ephemeral transcript when a project is opened. Agent modes still need a project — picking one without a project will surface a tool error; acceptable for v1. `frontend/src/App.tsx`, `frontend/src/tabs/ChatTab.tsx`.
 - **TD6** — Resizable chat ↔ file split + collapsible chat side. `ChatTab` got a drag-resize divider (double-click = hide chat), a "collapse chat" button in the chat header (shown when a file is open), a collapsed-chat rail mirroring the preview rail to restore it, and `{filePaneWidth, chatOpen, panelOpen}` persisted per project in `localStorage` (`llmwb:chatLayout:<projectId>`). `frontend/src/tabs/ChatTab.tsx`.
 - **TD16** — Mode `system_prompt_template` (path + placeholders) — done in PR25.

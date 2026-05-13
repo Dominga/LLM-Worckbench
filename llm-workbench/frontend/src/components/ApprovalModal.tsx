@@ -101,6 +101,16 @@ export function ApprovalModal() {
             </Box>
           </Group>
         </Box>
+      ) : req.tool === 'make_directory' ? (
+        <Box>
+          <Text size="sm">
+            Create directory{' '}
+            <Text span fw={600} ff="ui-monospace, monospace">
+              {req.path ?? '(unknown)'}
+            </Text>
+            {' '}(parents will be created as needed).
+          </Text>
+        </Box>
       ) : (
         <Box>
           <Text size="xs" c="dimmed" mb={4}>

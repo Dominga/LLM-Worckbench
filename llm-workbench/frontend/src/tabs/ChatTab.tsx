@@ -1595,6 +1595,8 @@ function toolIcon(name: string): string {
       return '🔍';
     case 'edit_file':
       return '✏️';
+    case 'make_directory':
+      return '📁';
     default:
       return '🔧';
   }
@@ -1618,6 +1620,9 @@ function chipSummary(c: ToolCallChip): string {
   if (c.name === 'edit_file' && parsed.path) {
     const bytes = typeof parsed.content === 'string' ? parsed.content.length : 0;
     return `${parsed.path} · ${bytes}B`;
+  }
+  if (c.name === 'make_directory' && parsed.path) {
+    return String(parsed.path);
   }
   return '';
 }

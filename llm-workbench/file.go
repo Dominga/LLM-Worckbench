@@ -222,6 +222,32 @@ func (fsrv *FileService) WriteFile(projectID, relPath, content string) error {
 	return nil
 }
 
+// MakeDirectory creates `relPath` (and missing parents) inside the project,
+// `mkdir -p`-style. Refuses paths that escape the project root or land
+// inside the per-project state directory. If the path already exists as a
+// directory, returns created=false without error; if it exists as a file,
+// returns an error.
+func (fsrv *FileService) MakeDirectory(projectID, relPath string) (created bool, err error) {
+	abs, p, err := fsrv.resolveSafe(projectID, relPath)
+	if err != nil {
+		return false, err
+	}
+	stateDir := filepath.Join(p.Path, ProjectDirName)
+	if abs == stateDir || strings.HasPrefix(abs+string(os.PathSeparator), stateDir+string(os.PathSeparator)) {
+		return false, fmt.Errorf("refusing to create directory inside project state directory")
+	}
+	if st, statErr := os.Stat(abs); statErr == nil {
+		if !st.IsDir() {
+			return false, fmt.Errorf("%s exists and is not a directory", relPath)
+		}
+		return false, nil
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return false, fmt.Errorf("mkdir: %w", err)
+	}
+	return true, nil
+}
+
 // statForChange is a small helper that returns mod-time + size — used by
 // future polling logic to detect external file changes (M1 polling
 // strategy from TODO.md).

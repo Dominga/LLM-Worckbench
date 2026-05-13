@@ -14,7 +14,8 @@ import (
 // when more writes land, extend this set (or add a Tool.IsWrite()
 // method if the count keeps growing).
 var writeTools = map[string]bool{
-	"edit_file": true,
+	"edit_file":      true,
+	"make_directory": true,
 }
 
 // IsWriteTool reports whether a tool name corresponds to a write
