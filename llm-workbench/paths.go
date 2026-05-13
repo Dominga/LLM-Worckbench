@@ -103,3 +103,39 @@ func globalFamiliesDir() string {
 	}
 	return filepath.Join(d, "families")
 }
+
+// registryDir / registrySourcesPath / registryInstalledPath /
+// registryCacheDir are the on-disk layout for the external-registry
+// service (TD33). Sources + installed records live as TOML; cached
+// index.json files land per-source under cache/.
+func registryDir() string {
+	d, err := configDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "registry")
+}
+
+func registrySourcesPath() string {
+	d := registryDir()
+	if d == "" {
+		return ""
+	}
+	return filepath.Join(d, "sources.toml")
+}
+
+func registryInstalledPath() string {
+	d := registryDir()
+	if d == "" {
+		return ""
+	}
+	return filepath.Join(d, "installed.toml")
+}
+
+func registryCacheDir(sourceID string) string {
+	d := registryDir()
+	if d == "" {
+		return ""
+	}
+	return filepath.Join(d, "cache", sourceID)
+}

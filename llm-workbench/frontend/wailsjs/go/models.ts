@@ -41,6 +41,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class BrowseFilter {
+	    type?: string;
+	    query?: string;
+	    tags?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowseFilter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.query = source["query"];
+	        this.tags = source["tags"];
+	    }
+	}
 	export class Build {
 	    ID: string;
 	    RecipeID: string;
@@ -564,6 +580,49 @@ export namespace main {
 	        this.loadedMs = source["loadedMs"];
 	    }
 	}
+	export class InstalledArtifact {
+	    type: string;
+	    id: string;
+	    version: string;
+	    sourceId: string;
+	    files: string[];
+	    sha256?: string;
+	    // Go type: time
+	    installedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new InstalledArtifact(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.id = source["id"];
+	        this.version = source["version"];
+	        this.sourceId = source["sourceId"];
+	        this.files = source["files"];
+	        this.sha256 = source["sha256"];
+	        this.installedAt = this.convertValues(source["installedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class InstanceMetrics {
 	    profileId: string;
 	    lastTps: number;
@@ -814,6 +873,146 @@ export namespace main {
 	        this.Name = source["Name"];
 	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
 	        this.LastOpened = this.convertValues(source["LastOpened"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RegistryFile {
+	    path: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistryFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.url = source["url"];
+	    }
+	}
+	export class RegistryArtifact {
+	    type: string;
+	    id: string;
+	    version: string;
+	    sha256?: string;
+	    files: RegistryFile[];
+	    description?: string;
+	    tags?: string[];
+	    recommended_for?: string[];
+	    author?: string;
+	    preview?: string;
+	    source?: string;
+	    sourceName?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistryArtifact(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.id = source["id"];
+	        this.version = source["version"];
+	        this.sha256 = source["sha256"];
+	        this.files = this.convertValues(source["files"], RegistryFile);
+	        this.description = source["description"];
+	        this.tags = source["tags"];
+	        this.recommended_for = source["recommended_for"];
+	        this.author = source["author"];
+	        this.preview = source["preview"];
+	        this.source = source["source"];
+	        this.sourceName = source["sourceName"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class RegistryIndex {
+	    schema_version: number;
+	    updated_at?: string;
+	    artifacts: RegistryArtifact[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistryIndex(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.schema_version = source["schema_version"];
+	        this.updated_at = source["updated_at"];
+	        this.artifacts = this.convertValues(source["artifacts"], RegistryArtifact);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RegistrySource {
+	    id: string;
+	    name: string;
+	    url: string;
+	    autoRefresh: boolean;
+	    // Go type: time
+	    addedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrySource(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.autoRefresh = source["autoRefresh"];
+	        this.addedAt = this.convertValues(source["addedAt"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -32,6 +32,7 @@ type App struct {
 	modes     *ModeService
 	memory    *MemoryService
 	families  *FamilyService
+	registry2 *RegistryService // TD33 external registry (sources / install / browse)
 	approvals *ApprovalManager
 	snapshots *SnapshotService
 	scripting *ScriptingService
@@ -114,6 +115,7 @@ func (a *App) startup(ctx context.Context) {
 		wruntime.LogInfof(ctx, "seeded %d family files into global families dir", len(written))
 	}
 	a.families = NewFamilyService()
+	a.registry2 = NewRegistryService()
 	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
 	// global modes dir on first launch. Subsequent launches leave the
 	// dir alone so user edits persist.
@@ -319,6 +321,105 @@ func (a *App) ListFamilies() []Family {
 		return nil
 	}
 	return a.families.List()
+}
+
+// ─────────────────────── Registry (TD33) ────────────────────────
+
+// ListRegistrySources returns the subscribed registry sources, in
+// added-at order. Empty when the user hasn't configured any yet.
+func (a *App) ListRegistrySources() ([]RegistrySource, error) {
+	if a.registry2 == nil {
+		return nil, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.ListSources()
+}
+
+// AddRegistrySource subscribes to a new source. Returns the
+// persisted record (with generated ID + AddedAt) on success.
+func (a *App) AddRegistrySource(name, sourceURL string) (RegistrySource, error) {
+	if a.registry2 == nil {
+		return RegistrySource{}, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.AddSource(name, sourceURL)
+}
+
+// RemoveRegistrySource drops a source + its cached index. Installed
+// artifacts coming from it stay on disk; only attribution is lost.
+func (a *App) RemoveRegistrySource(id string) error {
+	if a.registry2 == nil {
+		return fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.RemoveSource(id)
+}
+
+// RefreshRegistrySource fetches one source's index.json and caches
+// it. Browse reads from the cache, so a refresh is the way to pull
+// in updates.
+func (a *App) RefreshRegistrySource(id string) (RegistryIndex, error) {
+	if a.registry2 == nil {
+		return RegistryIndex{}, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.Refresh(id)
+}
+
+// RefreshAllRegistrySources iterates every configured source and
+// returns per-source error strings ("" = success) so the UI can
+// surface partial failures without aborting the batch.
+func (a *App) RefreshAllRegistrySources() (map[string]string, error) {
+	if a.registry2 == nil {
+		return nil, fmt.Errorf("registry service unavailable")
+	}
+	raw, err := a.registry2.RefreshAll()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if v != nil {
+			out[k] = v.Error()
+		} else {
+			out[k] = ""
+		}
+	}
+	return out, nil
+}
+
+// BrowseRegistry returns the merged + filtered artifact view across
+// every cached source. Reads the cache only — no network — so the
+// caller must Refresh first to see updates.
+func (a *App) BrowseRegistry(filter BrowseFilter) ([]RegistryArtifact, error) {
+	if a.registry2 == nil {
+		return nil, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.Browse(filter)
+}
+
+// InstallRegistryArtifact downloads + writes the artifact's files
+// under the per-type install dir (modes / families) and records the
+// install in installed.toml. Re-installing a different version
+// cleans up the old one first.
+func (a *App) InstallRegistryArtifact(sourceID, artifactID, version string) (InstalledArtifact, error) {
+	if a.registry2 == nil {
+		return InstalledArtifact{}, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.Install(sourceID, artifactID, version)
+}
+
+// UninstallRegistryArtifact removes the {type, id} entry and its
+// files. Idempotent — missing entry is not an error.
+func (a *App) UninstallRegistryArtifact(typ, id string) error {
+	if a.registry2 == nil {
+		return fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.Uninstall(typ, id)
+}
+
+// ListInstalledArtifacts returns the installed ledger.
+func (a *App) ListInstalledArtifacts() ([]InstalledArtifact, error) {
+	if a.registry2 == nil {
+		return nil, fmt.Errorf("registry service unavailable")
+	}
+	return a.registry2.ListInstalled()
 }
 
 // DetectFamily reads a GGUF file's header and returns a best-guess
