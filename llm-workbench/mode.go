@@ -548,13 +548,12 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// saveProjectModeFile writes a project-local mode override under
-// <projectRoot>/.llm-workshop/modes/: <id>.toml (the definition) plus
-// <id>.system.md (the prompt template). Used by the Prompt-Lab mode
-// editor; promotes builtin/global modes into a project-owned copy. The
-// template path is normalised to "<id>.system.md" regardless of what the
-// source mode used.
-func saveProjectModeFile(projectRoot, modeID string, def Mode, template string) error {
+// saveModeFileToDir writes a mode definition + its template into `dir`:
+// <id>.toml (the definition) plus <id>.system.md (the prompt template).
+// Project- and global-scope writers are thin wrappers over this. The
+// template path is normalised to "<id>.system.md" regardless of what
+// the source mode used.
+func saveModeFileToDir(dir, modeID string, def Mode, template string) error {
 	id := strings.TrimSpace(modeID)
 	if !modeIDRe.MatchString(id) {
 		return fmt.Errorf("invalid mode id %q", modeID)
@@ -569,7 +568,6 @@ func saveProjectModeFile(projectRoot, modeID string, def Mode, template string) 
 		return err
 	}
 
-	dir := filepath.Join(projectRoot, ProjectDirName, "modes")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -599,4 +597,41 @@ func saveProjectModeFile(projectRoot, modeID string, def Mode, template string) 
 		return fmt.Errorf("encode mode %q: %w", id, err)
 	}
 	return atomicWriteFile(filepath.Join(dir, id+".toml"), buf.Bytes(), 0o644)
+}
+
+// saveProjectModeFile writes a project-local mode override under
+// <projectRoot>/.llm-workshop/modes/. Used by the Prompt-Lab mode
+// editor; promotes builtin/global modes into a project-owned copy.
+func saveProjectModeFile(projectRoot, modeID string, def Mode, template string) error {
+	return saveModeFileToDir(filepath.Join(projectRoot, ProjectDirName, "modes"), modeID, def, template)
+}
+
+// saveGlobalModeFile writes a per-user mode definition into
+// <globalModesDir>/. The on-disk shape matches the project-local files
+// so the same loader handles both; the only difference is location.
+func saveGlobalModeFile(modeID string, def Mode, template string) error {
+	dir := globalModesDir()
+	if dir == "" {
+		return errors.New("global modes dir unresolved")
+	}
+	return saveModeFileToDir(dir, modeID, def, template)
+}
+
+// removeProjectModeOverride deletes <project>/.llm-workshop/modes/<id>.toml
+// plus its `<id>.system.md` template (if present). The resolver falls
+// back to the global or builtin layer next time the mode is loaded.
+// Missing files are not an error — the operation is idempotent.
+func removeProjectModeOverride(projectRoot, modeID string) error {
+	id := strings.TrimSpace(modeID)
+	if !modeIDRe.MatchString(id) {
+		return fmt.Errorf("invalid mode id %q", modeID)
+	}
+	dir := filepath.Join(projectRoot, ProjectDirName, "modes")
+	for _, name := range []string{id + ".toml", id + ".system.md"} {
+		path := filepath.Join(dir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", name, err)
+		}
+	}
+	return nil
 }

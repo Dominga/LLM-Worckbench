@@ -50,6 +50,7 @@ import {
   LoadModeTemplate,
   SaveMode,
   PreviewModeTemplate,
+  RemoveProjectModeOverride,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 
@@ -220,6 +221,10 @@ function SegmentButton({
 
 function ModesPanel({ activeProject }: { activeProject: Project }) {
   const [modes, setModes] = useState<Mode[]>([]);
+  // baseModes is the builtin + global merged view (no project layer). Used
+  // to detect "overridden in this project" rows and to know which IDs
+  // would survive removing the project override.
+  const [baseModes, setBaseModes] = useState<Mode[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [template, setTemplate] = useState<string>('');
   const [dirty, setDirty] = useState(false);
@@ -227,6 +232,10 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
   const [preview, setPreview] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [def, setDef] = useState<ModeDef>(emptyModeDef());
+  // saveScope picks the destination for the next save: "project" writes
+  // an override into <project>/.llm-workshop/modes/; "global" writes
+  // into <globalModesDir>/ and is visible across every project.
+  const [saveScope, setSaveScope] = useState<'project' | 'global'>('project');
 
   const updateDef = (patch: Partial<ModeDef>) => {
     setDef((d) => ({ ...d, ...patch }));
@@ -249,8 +258,14 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
 
   const refreshModes = async () => {
     try {
-      const list = (await ListModes(activeProject.ID)) as Mode[];
+      const [list, base] = await Promise.all([
+        ListModes(activeProject.ID) as Promise<Mode[]>,
+        // Empty projectID skips the project layer — gives us the
+        // builtin+global fallback set for the override badge.
+        ListModes('') as Promise<Mode[]>,
+      ]);
       setModes(list || []);
+      setBaseModes(base || []);
       if (!selectedId && list && list.length > 0) {
         setSelectedId(list[0].id);
       }
@@ -258,6 +273,13 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
       notifications.show({ color: 'red', title: 'List modes failed', message: String(e?.message ?? e) });
     }
   };
+
+  // Map of mode IDs that have a non-project fallback layer. Used to decide
+  // whether "Remove project override" is safe (mode survives the removal)
+  // and to render the "overridden" badge for project-layer rows.
+  const baseIds = useMemo(() => new Set(baseModes.map((m) => m.id)), [baseModes]);
+  const selectedHasOverride = selected?.source === 'project';
+  const selectedHasFallback = selected ? baseIds.has(selected.id) : false;
   useEffect(() => {
     refreshModes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,6 +324,10 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
               }
             : emptyModeDef(),
         );
+        // Default save destination: if the mode currently resolves from
+        // the project layer, save back to project; otherwise (global,
+        // builtin) save to global so edits propagate to every project.
+        setSaveScope(m?.source === 'project' ? 'project' : 'global');
       } catch (e: any) {
         notifications.show({ color: 'red', title: 'Load template failed', message: String(e?.message ?? e) });
       }
@@ -403,12 +429,38 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
               }),
           ),
       });
-      await SaveMode(activeProject.ID, selectedId, m, templateRef.current);
+      await SaveMode(saveScope, activeProject.ID, selectedId, m, templateRef.current);
       setDirty(false);
       await refreshModes();
-      notifications.show({ color: 'teal', title: 'Saved', message: selectedId });
+      notifications.show({
+        color: 'teal',
+        title: 'Saved',
+        message: `${selectedId} (${saveScope})`,
+      });
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Save failed', message: String(e?.message ?? e) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onRemoveOverride = async () => {
+    if (!selectedId) return;
+    const confirmed = window.confirm(
+      `Remove project override for "${selectedId}"?\n\n` +
+        (selectedHasFallback
+          ? 'The mode will fall back to its global/builtin definition.'
+          : 'This mode has no global/builtin fallback — it will disappear from this project.'),
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      await RemoveProjectModeOverride(activeProject.ID, selectedId);
+      setDirty(false);
+      await refreshModes();
+      notifications.show({ color: 'teal', title: 'Override removed', message: selectedId });
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Remove failed', message: String(e?.message ?? e) });
     } finally {
       setSaving(false);
     }
@@ -492,12 +544,53 @@ function ModesPanel({ activeProject }: { activeProject: Project }) {
           <span style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', color: V5.text }}>
             {selected ? selected.systemPromptTemplate || '(inline)' : '— pick a mode —'}
           </span>
+          {selected && selectedHasOverride && (
+            <span
+              style={{
+                fontSize: 9,
+                color: V5.warn,
+                textTransform: 'uppercase',
+                letterSpacing: 0.5,
+                border: `1px solid ${V5.warn}`,
+                borderRadius: 3,
+                padding: '1px 5px',
+              }}
+              title={
+                selectedHasFallback
+                  ? 'This project overrides the global/builtin definition.'
+                  : 'Project-only mode — no global/builtin fallback exists.'
+              }
+            >
+              project override
+            </span>
+          )}
           {dirty && (
             <span style={{ fontSize: 11, color: V5.warn }} title="Unsaved changes">
               ●
             </span>
           )}
           <span style={{ flex: 1 }} />
+          <Select
+            size="xs"
+            data={[
+              { value: 'project', label: 'Save to: project' },
+              { value: 'global', label: 'Save to: global' },
+            ]}
+            value={saveScope}
+            onChange={(v) => setSaveScope((v as 'project' | 'global') || 'project')}
+            allowDeselect={false}
+            w={150}
+          />
+          {selectedHasOverride && (
+            <button
+              onClick={onRemoveOverride}
+              disabled={!selectedId || saving}
+              style={toolBtnStyle(!selectedId || saving)}
+              title="Delete project-local override (.toml + .system.md)"
+            >
+              <IconTrash size={12} /> remove override
+            </button>
+          )}
           <button onClick={onSave} disabled={!selectedId || saving} style={toolBtnStyle(!selectedId || saving)}>
             <IconDeviceFloppy size={12} /> save
           </button>

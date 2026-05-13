@@ -198,6 +198,10 @@ export function RebuildIndex(arg1) {
   return window['go']['main']['App']['RebuildIndex'](arg1);
 }
 
+export function RemoveProjectModeOverride(arg1, arg2) {
+  return window['go']['main']['App']['RemoveProjectModeOverride'](arg1, arg2);
+}
+
 export function RenameSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameSession'](arg1, arg2, arg3);
 }
@@ -222,8 +226,8 @@ export function RunScript(arg1, arg2) {
   return window['go']['main']['App']['RunScript'](arg1, arg2);
 }
 
-export function SaveMode(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SaveMode'](arg1, arg2, arg3, arg4);
+export function SaveMode(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveMode'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SaveModeTemplate(arg1, arg2, arg3) {

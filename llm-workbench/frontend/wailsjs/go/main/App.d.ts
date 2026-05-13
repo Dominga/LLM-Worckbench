@@ -100,6 +100,8 @@ export function ReadProjectFile(arg1:string,arg2:string):Promise<main.FileConten
 
 export function RebuildIndex(arg1:string):Promise<main.IndexProgress>;
 
+export function RemoveProjectModeOverride(arg1:string,arg2:string):Promise<void>;
+
 export function RenameSession(arg1:string,arg2:string,arg3:string):Promise<main.Session>;
 
 export function RenderMarkdown(arg1:string):Promise<main.RenderResult>;
@@ -112,7 +114,7 @@ export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.Ag
 
 export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
 
-export function SaveMode(arg1:string,arg2:string,arg3:main.Mode,arg4:string):Promise<void>;
+export function SaveMode(arg1:string,arg2:string,arg3:string,arg4:main.Mode,arg5:string):Promise<void>;
 
 export function SaveModeTemplate(arg1:string,arg2:string,arg3:string):Promise<void>;
 

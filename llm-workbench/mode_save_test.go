@@ -117,3 +117,63 @@ func TestSaveProjectModeFileBadID(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveGlobalModeFile routes XDG_CONFIG_HOME at a temp dir so the
+// global modes dir lands somewhere we can clean up, then verifies the
+// .toml + .system.md land in the global location and the loader sees
+// them as ModeSourceGlobal.
+func TestSaveGlobalModeFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	def := Mode{
+		Name:          "Worldbuilder",
+		Color:         "#a855f7",
+		Desc:          "narrative helper",
+		ToolWhitelist: []string{"search_semantic", "read_file"},
+		Approval:      ApprovalAuto,
+		Context:       ContextRAGAuto,
+	}
+	if err := saveGlobalModeFile("worldbuilder", def, "You build worlds for {{project.name}}."); err != nil {
+		t.Fatalf("saveGlobalModeFile: %v", err)
+	}
+
+	gDir := globalModesDir()
+	if _, err := os.Stat(filepath.Join(gDir, "worldbuilder.toml")); err != nil {
+		t.Fatalf("toml not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(gDir, "worldbuilder.system.md")); err != nil {
+		t.Fatalf("template not written: %v", err)
+	}
+
+	modes, warns := loadModesDir(gDir, ModeSourceGlobal)
+	if len(warns) != 0 {
+		t.Errorf("loader warnings: %v", warns)
+	}
+	if len(modes) != 1 || modes[0].Source != ModeSourceGlobal {
+		t.Fatalf("loaded = %+v", modes)
+	}
+}
+
+// TestRemoveProjectModeOverride writes a project-local override and
+// then removes it; ensures both files vanish and the call is
+// idempotent (second remove is a no-op).
+func TestRemoveProjectModeOverride(t *testing.T) {
+	root := t.TempDir()
+	if err := saveProjectModeFile(root, "agent", Mode{Name: "Agent", Approval: ApprovalAlways, Context: ContextRAGExplicit}, "body"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := removeProjectModeOverride(root, "agent"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	dir := filepath.Join(root, ProjectDirName, "modes")
+	for _, name := range []string{"agent.toml", "agent.system.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s still present: %v", name, err)
+		}
+	}
+	// Idempotent — second call on a missing override returns nil.
+	if err := removeProjectModeOverride(root, "agent"); err != nil {
+		t.Errorf("second remove should be a no-op, got %v", err)
+	}
+}

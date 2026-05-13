@@ -269,12 +269,39 @@ func (a *App) SaveModeTemplate(projectID, modeID, content string) error {
 	return nil
 }
 
-// SaveMode writes a project-local mode override: the definition
-// (`<project>/.llm-workshop/modes/<modeID>.toml` — name/color/desc/tools/
-// approval/context/params) plus its prompt template
-// (`<modeID>.system.md`). Promotes a builtin/global mode into a
-// project-owned copy. Used by the Prompt-Lab mode editor.
-func (a *App) SaveMode(projectID, modeID string, def Mode, template string) error {
+// SaveMode writes a mode definition + its template. `scope` chooses
+// the destination:
+//
+//   - "project" — writes under <project>/.llm-workshop/modes/. Promotes
+//     a builtin/global mode into a project-owned override. Requires a
+//     non-empty projectID.
+//   - "global"  — writes under <globalModesDir>/. Affects every project
+//     for the current user; projectID is ignored.
+//
+// Used by the Prompt-Lab mode editor.
+func (a *App) SaveMode(scope, projectID, modeID string, def Mode, template string) error {
+	switch scope {
+	case "global":
+		return saveGlobalModeFile(modeID, def, template)
+	case "", "project":
+		if a.projects == nil {
+			return fmt.Errorf("project service unavailable")
+		}
+		p, err := a.projects.Get(projectID)
+		if err != nil {
+			return err
+		}
+		return saveProjectModeFile(p.Path, modeID, def, template)
+	default:
+		return fmt.Errorf("unknown scope %q (want \"project\" or \"global\")", scope)
+	}
+}
+
+// RemoveProjectModeOverride deletes the project-local override files
+// for `modeID` (both <id>.toml and <id>.system.md). After this the
+// project falls back to the global / builtin layer for that mode. Use
+// when the user wants to undo a per-project tweak.
+func (a *App) RemoveProjectModeOverride(projectID, modeID string) error {
 	if a.projects == nil {
 		return fmt.Errorf("project service unavailable")
 	}
@@ -282,7 +309,7 @@ func (a *App) SaveMode(projectID, modeID string, def Mode, template string) erro
 	if err != nil {
 		return err
 	}
-	return saveProjectModeFile(p.Path, modeID, def, template)
+	return removeProjectModeOverride(p.Path, modeID)
 }
 
 // PreviewModeTemplate renders the supplied source (unsaved buffer)
