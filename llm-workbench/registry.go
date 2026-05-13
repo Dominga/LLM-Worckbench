@@ -71,6 +71,12 @@ type RegistryArtifact struct {
 	RecommendedFor []string            `json:"recommended_for,omitempty"`
 	Author         string              `json:"author,omitempty"`
 	Preview        string              `json:"preview,omitempty"`
+	// DefaultInstall marks an artifact as part of the source's
+	// out-of-the-box set: AutoInstallDefaults installs every such
+	// artifact the first time a source is subscribed. Skipping any
+	// whose dest files already exist on disk keeps upgrades from
+	// older app versions safe.
+	DefaultInstall bool `json:"default_install,omitempty"`
 	// Source / SourceName get stamped at browse time so the UI can
 	// show "from <source>" without joining maps. Not part of the
 	// wire schema — purely a convenience for downstream callers.
@@ -143,20 +149,84 @@ func NewRegistryService() *RegistryService {
 const defaultRegistrySourceURL = "https://raw.githubusercontent.com/Dominga/llm-workbench-registry/main/index.json"
 
 // SeedDefaultSourceOnce writes the default subscribed source into
-// sources.toml on first launch. No-op when the file already exists —
-// preserves user edits + dropped subscriptions across restarts.
-func (s *RegistryService) SeedDefaultSourceOnce() error {
+// sources.toml on first launch. Returns whether a fresh subscription
+// was created (the caller uses that signal to decide if it should
+// auto-install default artifacts afterwards). No-op when the file
+// already exists — preserves user edits + dropped subscriptions
+// across restarts.
+func (s *RegistryService) SeedDefaultSourceOnce() (seeded bool, err error) {
 	path := registrySourcesPath()
 	if path == "" {
-		return errors.New("registry path unresolved")
+		return false, errors.New("registry path unresolved")
 	}
 	if _, err := os.Stat(path); err == nil {
-		return nil // user state already exists
+		return false, nil
 	}
 	if _, err := s.AddSource("Official Registry", defaultRegistrySourceURL); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// AutoInstallDefaults refreshes every subscribed source and installs
+// each cached artifact flagged `default_install=true` that isn't
+// already installed AND whose destination files don't yet exist on
+// disk. The dest-file check protects users upgrading from older
+// Workbench builds that seeded the same modes via the embed FS:
+// their existing files stay put and the registry adopts them on
+// the next manual install / update.
+//
+// Errors per artifact are non-fatal — the function continues and
+// returns the first failure for logging only.
+func (s *RegistryService) AutoInstallDefaults() error {
+	if _, err := s.RefreshAll(); err != nil {
 		return err
 	}
-	return nil
+	srcs, err := s.ListSources()
+	if err != nil {
+		return err
+	}
+	installed, err := s.ListInstalled()
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(installed))
+	for _, it := range installed {
+		have[it.Type+":"+it.ID] = true
+	}
+	var firstErr error
+	for _, src := range srcs {
+		idx := s.loadCachedIndex(src.ID)
+		for _, art := range idx.Artifacts {
+			if !art.DefaultInstall {
+				continue
+			}
+			if have[art.Type+":"+art.ID] {
+				continue
+			}
+			dest, derr := destDirForType(art.Type)
+			if derr != nil {
+				if firstErr == nil {
+					firstErr = derr
+				}
+				continue
+			}
+			skip := false
+			for _, f := range art.Files {
+				if _, statErr := os.Stat(filepath.Join(dest, f.Path)); statErr == nil {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue // upgrade path — leave existing files alone
+			}
+			if _, iErr := s.Install(src.ID, art.ID, art.Version); iErr != nil && firstErr == nil {
+				firstErr = iErr
+			}
+		}
+	}
+	return firstErr
 }
 
 // SetHTTPClient swaps the underlying http.Client. Tests use this to

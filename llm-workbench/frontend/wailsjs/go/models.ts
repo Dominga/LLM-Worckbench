@@ -918,6 +918,7 @@ export namespace main {
 	    recommended_for?: string[];
 	    author?: string;
 	    preview?: string;
+	    default_install?: boolean;
 	    source?: string;
 	    sourceName?: string;
 	
@@ -937,6 +938,7 @@ export namespace main {
 	        this.recommended_for = source["recommended_for"];
 	        this.author = source["author"];
 	        this.preview = source["preview"];
+	        this.default_install = source["default_install"];
 	        this.source = source["source"];
 	        this.sourceName = source["sourceName"];
 	    }

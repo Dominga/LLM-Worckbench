@@ -116,16 +116,22 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.families = NewFamilyService()
 	a.registry2 = NewRegistryService()
-	if err := a.registry2.SeedDefaultSourceOnce(); err != nil {
+	seeded, err := a.registry2.SeedDefaultSourceOnce()
+	if err != nil {
 		wruntime.LogWarningf(ctx, "seed default registry source: %v", err)
 	}
-	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
-	// global modes dir on first launch. Subsequent launches leave the
-	// dir alone so user edits persist.
-	if written, err := seedGlobalModesOnce(); err != nil {
-		wruntime.LogWarningf(ctx, "seed global modes: %v", err)
-	} else if len(written) > 0 {
-		wruntime.LogInfof(ctx, "seeded %d mode files into global modes dir", len(written))
+	// On fresh installs (sources.toml just created) reach out to the
+	// official registry in the background and auto-install every
+	// `default_install` artifact — that's how the agent / auto-edit /
+	// research modes land for new users now that they no longer ship
+	// in the binary. Skipped silently when offline; the user can run
+	// it from Settings → Registry later.
+	if seeded {
+		go func() {
+			if err := a.registry2.AutoInstallDefaults(); err != nil {
+				wruntime.LogWarningf(ctx, "auto-install default registry artifacts: %v", err)
+			}
+		}()
 	}
 	a.approvals = NewApprovalManager()
 	a.snapshots = NewSnapshotService(a.projects)

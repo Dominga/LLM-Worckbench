@@ -256,6 +256,149 @@ func TestRegistryInstallShaMismatch(t *testing.T) {
 	}
 }
 
+// TestAutoInstallDefaults wires the default-install flow end to end:
+// fresh subscription → refresh + auto-install lands the marked
+// artifact in the modes dir + records it in the ledger, while a
+// non-default artifact is left alone. A pre-existing file at the
+// destination is respected (the upgrade-from-bundled case).
+func TestAutoInstallDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	mux := http.NewServeMux()
+	defaultMode := `id = "official-agent"
+name = "Official Agent"
+desc = "auto"
+tool_whitelist = []
+approval = "auto"
+context = "none"
+`
+	defaultSys := "official body"
+	optionalMode := `id = "optional"
+name = "Optional"
+desc = "manual"
+tool_whitelist = []
+approval = "auto"
+context = "none"
+`
+	mux.HandleFunc("/files/official-agent.toml", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(defaultMode)) })
+	mux.HandleFunc("/files/official-agent.system.md", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(defaultSys)) })
+	mux.HandleFunc("/files/optional.toml", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(optionalMode)) })
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	idx := RegistryIndex{
+		SchemaVersion: 1,
+		Artifacts: []RegistryArtifact{
+			{
+				Type: "mode", ID: "official-agent", Version: "1.0.0",
+				DefaultInstall: true,
+				Files: []RegistryFile{
+					{Path: "official-agent.toml", URL: srv.URL + "/files/official-agent.toml"},
+					{Path: "official-agent.system.md", URL: srv.URL + "/files/official-agent.system.md"},
+				},
+			},
+			{
+				Type: "mode", ID: "optional", Version: "1.0.0",
+				Files: []RegistryFile{
+					{Path: "optional.toml", URL: srv.URL + "/files/optional.toml"},
+				},
+			},
+		},
+	}
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(idx)
+	})
+
+	rs := NewRegistryService()
+	if _, err := rs.AddSource("Test", srv.URL+"/index.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.AutoInstallDefaults(); err != nil {
+		t.Fatalf("AutoInstallDefaults: %v", err)
+	}
+
+	items, _ := rs.ListInstalled()
+	if len(items) != 1 || items[0].ID != "official-agent" {
+		t.Fatalf("expected only official-agent installed, got %+v", items)
+	}
+	if _, err := os.Stat(filepath.Join(globalModesDir(), "official-agent.toml")); err != nil {
+		t.Errorf("default mode not on disk: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(globalModesDir(), "optional.toml")); !os.IsNotExist(err) {
+		t.Errorf("optional mode should NOT have auto-installed: %v", err)
+	}
+
+	// Second pass is idempotent — the ledger entry already covers it.
+	if err := rs.AutoInstallDefaults(); err != nil {
+		t.Errorf("second pass: %v", err)
+	}
+	items, _ = rs.ListInstalled()
+	if len(items) != 1 {
+		t.Errorf("second pass added more installs: %+v", items)
+	}
+}
+
+// TestAutoInstallDefaultsRespectsExistingFile covers the upgrade
+// path: a previous app build left agent.toml in modes/ via the embed
+// seed (no install ledger entry). The auto-installer must NOT
+// clobber it — the user's hand-edits would otherwise vanish.
+func TestAutoInstallDefaultsRespectsExistingFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/files/agent.toml", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`id = "agent"
+name = "Agent FROM REGISTRY"
+desc = "should not overwrite"
+tool_whitelist = []
+approval = "auto"
+context = "none"
+`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(RegistryIndex{
+			SchemaVersion: 1,
+			Artifacts: []RegistryArtifact{{
+				Type: "mode", ID: "agent", Version: "2.0.0", DefaultInstall: true,
+				Files: []RegistryFile{{Path: "agent.toml", URL: srv.URL + "/files/agent.toml"}},
+			}},
+		})
+	})
+
+	// Plant a "pre-existing" agent.toml as if a previous Workbench
+	// install seeded it via the (now-removed) embed FS.
+	if err := os.MkdirAll(globalModesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pre := filepath.Join(globalModesDir(), "agent.toml")
+	if err := os.WriteFile(pre, []byte(`id = "agent"
+name = "User-edited Agent"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := NewRegistryService()
+	if _, err := rs.AddSource("Test", srv.URL+"/index.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.AutoInstallDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(pre)
+	if !strings.Contains(string(body), "User-edited Agent") {
+		t.Errorf("auto-install clobbered an existing file:\n%s", body)
+	}
+	items, _ := rs.ListInstalled()
+	if len(items) != 0 {
+		t.Errorf("ledger should be empty (existing file blocked install), got %+v", items)
+	}
+}
+
 // TestRegistrySlugifyAddSource pins the slug shape on a handful of
 // inputs the user might paste.
 func TestRegistrySlugifyAddSource(t *testing.T) {
