@@ -97,7 +97,6 @@ func (idx *IndexDB) migrate() error {
 			source     TEXT    NOT NULL DEFAULT 'content'
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path)`,
-		`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 			content,
 			content='chunks',
@@ -134,6 +133,12 @@ func (idx *IndexDB) migrate() error {
 			_ = tx.Rollback()
 			return fmt.Errorf("alter chunks add source: %w", err)
 		}
+	}
+	// Index on `source` must run AFTER the ALTER above — on a v1 DB the
+	// column doesn't exist yet when the main stmts loop runs.
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("create idx_chunks_source: %w", err)
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
