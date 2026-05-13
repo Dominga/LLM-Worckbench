@@ -30,6 +30,7 @@ type App struct {
 	rag       *RAGService
 	tools     *ToolRegistry
 	modes     *ModeService
+	memory    *MemoryService
 	approvals *ApprovalManager
 	snapshots *SnapshotService
 	scripting *ScriptingService
@@ -100,7 +101,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.tools = NewToolRegistry()
 	RegisterBuiltinTools(a.tools)
+	a.memory = NewMemoryService(a.projects)
 	a.modes = NewModeService(a.projects)
+	a.modes.AttachMemory(a.memory)
 	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
 	// global modes dir on first launch. Subsequent launches leave the
 	// dir alone so user edits persist.
@@ -137,6 +140,7 @@ func (a *App) startup(ctx context.Context) {
 			EmbedProfileID: embedID,
 			Files:          a.files,
 			RAG:            a.rag,
+			Memory:         a.memory,
 		}
 	})
 
@@ -295,6 +299,27 @@ func (a *App) SaveMode(scope, projectID, modeID string, def Mode, template strin
 	default:
 		return fmt.Errorf("unknown scope %q (want \"project\" or \"global\")", scope)
 	}
+}
+
+// ReadMemory returns the contents of the requested memory.md. `scope`
+// is "global" or "project"; projectID is required only for the project
+// scope. Missing files yield an empty string.
+func (a *App) ReadMemory(scope, projectID string) (string, error) {
+	if a.memory == nil {
+		return "", fmt.Errorf("memory service unavailable")
+	}
+	return a.memory.Read(MemoryScope(scope), projectID)
+}
+
+// AppendMemory adds `entry` to the bottom of the scope's memory.md
+// (stamped with the current UTC time). Returns the byte count
+// written. Used by the future settings/lab editor and as the user-side
+// counterpart of the agent's append_memory tool.
+func (a *App) AppendMemory(scope, projectID, entry string) (int, error) {
+	if a.memory == nil {
+		return 0, fmt.Errorf("memory service unavailable")
+	}
+	return a.memory.Append(MemoryScope(scope), projectID, entry)
 }
 
 // RemoveProjectModeOverride deletes the project-local override files

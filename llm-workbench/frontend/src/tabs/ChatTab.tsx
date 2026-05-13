@@ -1597,6 +1597,10 @@ function toolIcon(name: string): string {
       return '✏️';
     case 'make_directory':
       return '📁';
+    case 'read_memory':
+      return '🧠';
+    case 'append_memory':
+      return '🧠';
     default:
       return '🔧';
   }
@@ -1623,6 +1627,12 @@ function chipSummary(c: ToolCallChip): string {
   }
   if (c.name === 'make_directory' && parsed.path) {
     return String(parsed.path);
+  }
+  if ((c.name === 'read_memory' || c.name === 'append_memory') && parsed.scope) {
+    if (c.name === 'append_memory' && typeof parsed.entry === 'string') {
+      return `${parsed.scope} · ${parsed.entry.length}B`;
+    }
+    return String(parsed.scope);
   }
   return '';
 }

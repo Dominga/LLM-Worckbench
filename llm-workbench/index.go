@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -41,7 +42,7 @@ type IndexStats struct {
 	SchemaVer    int    `json:"schemaVer"`
 }
 
-const indexSchemaVersion = 1
+const indexSchemaVersion = 2
 
 // sqlite-vec is auto-registered against the default mattn driver via
 // the cgo bindings' init.
@@ -92,9 +93,11 @@ func (idx *IndexDB) migrate() error {
 			content    TEXT    NOT NULL,
 			sha256     TEXT    NOT NULL UNIQUE,
 			mtime      INTEGER NOT NULL,
-			created_at INTEGER NOT NULL
+			created_at INTEGER NOT NULL,
+			source     TEXT    NOT NULL DEFAULT 'content'
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path)`,
+		`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 			content,
 			content='chunks',
@@ -120,6 +123,16 @@ func (idx *IndexDB) migrate() error {
 		if _, err := tx.Exec(s); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("schema migrate: %w (stmt=%s)", err, firstLine(s))
+		}
+	}
+	// v1 → v2: add chunks.source. CREATE TABLE above already declares
+	// the column for fresh DBs; this ALTER catches existing v1 indexes.
+	// SQLite errors with "duplicate column name" when the column is
+	// already there — swallow that case so re-running is idempotent.
+	if _, err := tx.Exec(`ALTER TABLE chunks ADD COLUMN source TEXT NOT NULL DEFAULT 'content'`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			_ = tx.Rollback()
+			return fmt.Errorf("alter chunks add source: %w", err)
 		}
 	}
 	if _, err := tx.Exec(

@@ -293,11 +293,18 @@ func loadGlobalModes() ([]Mode, []string) {
 // projects). One instance per app is enough.
 type ModeService struct {
 	projects *ProjectService
+	memory   *MemoryService // optional — when set, exposes {{memory.*}} placeholders
 }
 
 func NewModeService(ps *ProjectService) *ModeService {
 	return &ModeService{projects: ps}
 }
+
+// AttachMemory wires the MemoryService so the prompt template context
+// gets `{{memory.global}}` and `{{memory.project}}` substituted from
+// the on-disk memory.md files. Optional; templates that don't
+// reference those placeholders work without it.
+func (s *ModeService) AttachMemory(ms *MemoryService) { s.memory = ms }
 
 // List returns the merged + sorted set of modes available for the
 // given project. Precedence on collision: project > global > builtin.
@@ -420,18 +427,31 @@ func (s *ModeService) loadTemplate(projectID, path string) (string, error) {
 }
 
 // buildTemplateContext assembles the variable map fed to renderTemplate.
-// Always seeded with project metadata; the caller's `params` get
-// namespaced under `param.<name>` so they can't clobber built-ins.
+// Always seeded with project metadata + memory (best effort — missing
+// files yield empty strings). The caller's `params` get namespaced
+// under `param.<name>` so they can't clobber built-ins.
 func (s *ModeService) buildTemplateContext(projectID string, params map[string]any) map[string]any {
 	ctx := map[string]any{
-		"project.id":   projectID,
-		"project.name": "",
-		"project.path": "",
+		"project.id":     projectID,
+		"project.name":   "",
+		"project.path":   "",
+		"memory.global":  "",
+		"memory.project": "",
 	}
 	if s.projects != nil && projectID != "" {
 		if p, err := s.projects.Get(projectID); err == nil {
 			ctx["project.name"] = p.Name
 			ctx["project.path"] = p.Path
+		}
+	}
+	if s.memory != nil {
+		if body, err := s.memory.Read(MemoryScopeGlobal, ""); err == nil {
+			ctx["memory.global"] = body
+		}
+		if projectID != "" {
+			if body, err := s.memory.Read(MemoryScopeProject, projectID); err == nil {
+				ctx["memory.project"] = body
+			}
 		}
 	}
 	for k, v := range params {

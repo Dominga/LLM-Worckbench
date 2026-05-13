@@ -72,3 +72,21 @@ func globalModesDir() string {
 	}
 	return filepath.Join(d, "modes")
 }
+
+// globalMemoryPath is `~/.config/llm-workbench/memory.md`. Per-user
+// freeform notes the agent can read into its system prompt and append
+// to. Returns "" if the config dir can't be resolved (callers treat
+// it as "no memory").
+func globalMemoryPath() string {
+	d, err := configDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "memory.md")
+}
+
+// projectMemoryPath returns <projectRoot>/.llm-workshop/memory.md. The
+// caller is responsible for resolving projectRoot from a projectID.
+func projectMemoryPath(projectRoot string) string {
+	return filepath.Join(projectRoot, ProjectDirName, "memory.md")
+}

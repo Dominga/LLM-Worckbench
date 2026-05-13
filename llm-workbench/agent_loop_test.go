@@ -87,8 +87,8 @@ func TestBuildToolSchemasFiltersByWhitelist(t *testing.T) {
 	RegisterBuiltinTools(reg)
 
 	all := buildToolSchemas(reg, nil)
-	if len(all) != 4 {
-		t.Errorf("nil whitelist len = %d, want 4 builtins", len(all))
+	if len(all) != 7 {
+		t.Errorf("nil whitelist len = %d, want 7 builtins", len(all))
 	}
 	limited := buildToolSchemas(reg, []string{"read_file"})
 	if len(limited) != 1 || limited[0].Function.Name != "read_file" {

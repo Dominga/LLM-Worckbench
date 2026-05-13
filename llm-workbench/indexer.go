@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -118,7 +119,7 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 		}
 		newChunks := chunker.Chunk(rel, string(content))
 
-		added, removed, upErr := upsertFileChunks(idx, rel, mtime, newChunks)
+		added, removed, upErr := upsertFileChunks(idx, rel, mtime, newChunks, "content")
 		if upErr != nil {
 			prog.Errors = append(prog.Errors, fmt.Sprintf("upsert %s: %v", rel, upErr))
 			return nil
@@ -137,6 +138,15 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 		prog.Errors = append(prog.Errors, fmt.Sprintf("walk root: %v", walkErr))
 	}
 
+	// Session log indexing: walks <project>/.llm-workshop/sessions/*.jsonl
+	// alongside the normal content walk so search_semantic can recall
+	// past conversations. Chunks land with source="history" and a
+	// stable path "sessions/<sessionID>.jsonl" relative to the project
+	// state dir.
+	if sessErr := fx.reindexSessions(projectID, idx, walked, &prog); sessErr != nil {
+		prog.Errors = append(prog.Errors, fmt.Sprintf("sessions: %v", sessErr))
+	}
+
 	// GC: delete chunks for paths that disappeared from disk.
 	gone, removed, gcErr := gcMissingPaths(idx, walked)
 	if gcErr != nil {
@@ -148,6 +158,106 @@ func (fx *FileIndexer) Reindex(projectID string) (IndexProgress, error) {
 	prog.DurationMs = time.Since(t0).Milliseconds()
 	fx.emitProgress(projectID, prog, "")
 	return prog, nil
+}
+
+// reindexSessions walks <project>/.llm-workshop/sessions/*.jsonl and
+// upserts chunks tagged source="history". Each file's content is the
+// flattened role-prefixed transcript so search hits land in something
+// the LLM can re-quote cleanly. Walked paths are added to the shared
+// `walked` set so gcMissingPaths picks up deleted sessions in the
+// same pass.
+func (fx *FileIndexer) reindexSessions(projectID string, idx *IndexDB, walked map[string]struct{}, prog *IndexProgress) error {
+	p, err := fx.projects.Get(projectID)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(p.Path, ProjectDirName, "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // never opened a session here — nothing to index
+		}
+		return err
+	}
+	chunker := &Chunker{TargetChars: 1200, OverlapChars: 100} // smaller than file default; conversations are short
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		abs := filepath.Join(dir, e.Name())
+		rel := "sessions/" + e.Name()
+		walked[rel] = struct{}{}
+
+		stat, sErr := e.Info()
+		if sErr != nil {
+			prog.Errors = append(prog.Errors, fmt.Sprintf("stat %s: %v", rel, sErr))
+			continue
+		}
+		mtime := stat.ModTime().Unix()
+		text, rErr := flattenSessionJSONL(abs)
+		if rErr != nil {
+			prog.Errors = append(prog.Errors, fmt.Sprintf("read session %s: %v", rel, rErr))
+			continue
+		}
+		newChunks := chunker.Chunk(rel, text)
+		added, removed, upErr := upsertFileChunks(idx, rel, mtime, newChunks, "history")
+		if upErr != nil {
+			prog.Errors = append(prog.Errors, fmt.Sprintf("upsert %s: %v", rel, upErr))
+			continue
+		}
+		if added == 0 && removed == 0 {
+			prog.FilesSkipped++
+		} else {
+			prog.FilesProcessed++
+		}
+		prog.ChunksAdded += added
+		prog.ChunksRemoved += removed
+		fx.emitProgress(projectID, *prog, rel)
+	}
+	return nil
+}
+
+// flattenSessionJSONL turns a session's JSONL transcript into a single
+// plain-text string suitable for chunking. Line 1 is the header (skipped);
+// subsequent lines are SessionMessage records — emitted as
+// "[role] content" blocks separated by blank lines. Tool-call deltas
+// and system payloads are dropped: hits on those rarely help the
+// agent and just inflate the index.
+func flattenSessionJSONL(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for i, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		if i == 0 {
+			continue // header
+		}
+		var msg struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if jErr := json.Unmarshal([]byte(line), &msg); jErr != nil {
+			continue
+		}
+		if msg.Role == "" || strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		if msg.Role == "system" || msg.Role == "tool" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("[")
+		b.WriteString(msg.Role)
+		b.WriteString("] ")
+		b.WriteString(msg.Content)
+	}
+	return b.String(), nil
 }
 
 // ReindexFile re-syncs a single file's chunks against disk — used by the
@@ -199,7 +309,7 @@ func (fx *FileIndexer) ReindexFile(projectID, relPath string) (added, removed in
 
 	chunker := &Chunker{TargetChars: cfg.ChunkChars, OverlapChars: cfg.OverlapChars}
 	newChunks := chunker.Chunk(rel, string(content))
-	added, removed, err = upsertFileChunks(idx, rel, mtime, newChunks)
+	added, removed, err = upsertFileChunks(idx, rel, mtime, newChunks, "content")
 	if err != nil {
 		return 0, 0, err
 	}
@@ -245,8 +355,13 @@ func (fx *FileIndexer) emitProgress(projectID string, prog IndexProgress, curren
 
 // upsertFileChunks compares the new chunk set against what's stored for
 // `path` and replaces if different. Returns counts. Idempotent on
-// unchanged files (sha set match → noop).
-func upsertFileChunks(idx *IndexDB, path string, mtime int64, newChunks []Chunk) (added, removed int, err error) {
+// unchanged files (sha set match → noop). `source` tags each row so a
+// later `search_semantic(kinds=[...])` can filter to content / history
+// / memory; v1 callers pass "content" or "history".
+func upsertFileChunks(idx *IndexDB, path string, mtime int64, newChunks []Chunk, source string) (added, removed int, err error) {
+	if source == "" {
+		source = "content"
+	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -319,15 +434,15 @@ func upsertFileChunks(idx *IndexDB, path string, mtime int64, newChunks []Chunk)
 	}
 	now := time.Now().Unix()
 	stmt, err := tx.Prepare(
-		`INSERT INTO chunks(path, start_byte, end_byte, content, sha256, mtime, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO chunks(path, start_byte, end_byte, content, sha256, mtime, created_at, source)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, 0, err
 	}
 	for _, c := range newChunks {
-		if _, iErr := stmt.Exec(c.Path, c.StartByte, c.EndByte, c.Content, c.SHA256, mtime, now); iErr != nil {
+		if _, iErr := stmt.Exec(c.Path, c.StartByte, c.EndByte, c.Content, c.SHA256, mtime, now, source); iErr != nil {
 			stmt.Close()
 			_ = tx.Rollback()
 			return 0, 0, iErr

@@ -16,6 +16,7 @@ import (
 var writeTools = map[string]bool{
 	"edit_file":      true,
 	"make_directory": true,
+	"append_memory":  true,
 }
 
 // IsWriteTool reports whether a tool name corresponds to a write

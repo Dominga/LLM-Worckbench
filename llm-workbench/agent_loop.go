@@ -469,6 +469,19 @@ func (c *ChatService) requestApprovalIfWrite(
 			req.Path = args.Path
 		}
 	}
+	// append_memory: prefill Path = "memory.md (<scope>)" and NewContent
+	// with the entry body so the existing diff-style modal can render
+	// the new note without a second roundtrip.
+	if toolName == "append_memory" {
+		var args struct {
+			Scope string `json:"scope"`
+			Entry string `json:"entry"`
+		}
+		if uErr := json.Unmarshal(rawArgs, &args); uErr == nil {
+			req.Path = "memory.md (" + args.Scope + ")"
+			req.NewContent = args.Entry
+		}
+	}
 	if c.ctx != nil {
 		// Per-stream channel for callers that already filter by streamId.
 		wruntime.EventsEmit(c.ctx, "agent:approval:request:"+streamID, req)

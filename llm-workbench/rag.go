@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 )
@@ -31,6 +32,12 @@ type SearchOptions struct {
 	RRFK       float64 // RRF smoothing constant (default 60)
 	DenseOnly  bool    // skip BM25 (e.g. for non-text content later)
 	SparseOnly bool    // skip dense (e.g. when no embed profile available)
+	// Kinds optionally restricts which chunk sources participate. Empty
+	// slice (or nil) keeps the default of ["content"] so legacy callers
+	// get the same behaviour as before the source column landed.
+	// Common values: "content" (project files), "history" (session
+	// transcripts). Pass an explicit superset to broaden.
+	Kinds []string
 }
 
 func (o *SearchOptions) defaults() {
@@ -42,6 +49,9 @@ func (o *SearchOptions) defaults() {
 	}
 	if o.RRFK <= 0 {
 		o.RRFK = 60
+	}
+	if len(o.Kinds) == 0 {
+		o.Kinds = []string{"content"}
 	}
 }
 
@@ -98,6 +108,17 @@ func (s *RAGService) Search(ctx context.Context, projectID, embedProfileID, quer
 			return nil, fmt.Errorf("sparse: %w", err)
 		}
 	}
+
+	// Post-filter both rankers by source. Builds the allowed-ID set in
+	// a single SELECT then drops entries that don't belong. Keeping
+	// the original rank positions in RRF is fine — filtered-out items
+	// just don't contribute; survivors keep their relative ordering.
+	allowedIDs, fErr := allowedSourceIDs(idx, opts.Kinds)
+	if fErr != nil {
+		return nil, fmt.Errorf("filter sources: %w", fErr)
+	}
+	denseRanks = filterRanks(denseRanks, allowedIDs)
+	sparseRanks = filterRanks(sparseRanks, allowedIDs)
 
 	fused := rrfFuse(denseRanks, sparseRanks, opts.RRFK)
 	if len(fused) == 0 {
@@ -189,6 +210,54 @@ func (s *RAGService) runDense(ctx context.Context, idx *IndexDB, embedProfileID,
 		r++
 	}
 	return ranks, dists, rows.Err()
+}
+
+// allowedSourceIDs returns the set of chunk IDs whose `source` is in
+// the supplied kinds list. Nil/empty kinds returns an empty set (a
+// guard against accidentally matching everything when the caller
+// forgot to defaults() — Search applies defaults upstream).
+func allowedSourceIDs(idx *IndexDB, kinds []string) (map[int64]struct{}, error) {
+	if len(kinds) == 0 {
+		return map[int64]struct{}{}, nil
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	placeholders := make([]string, len(kinds))
+	args := make([]any, len(kinds))
+	for i, k := range kinds {
+		placeholders[i] = "?"
+		args[i] = k
+	}
+	q := `SELECT id FROM chunks WHERE source IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := idx.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if sErr := rows.Scan(&id); sErr != nil {
+			return nil, sErr
+		}
+		set[id] = struct{}{}
+	}
+	return set, rows.Err()
+}
+
+// filterRanks keeps only entries whose ID is in `allowed`. Returns nil
+// if the input is nil (preserves "ranker disabled" signal).
+func filterRanks(in map[int64]int, allowed map[int64]struct{}) map[int64]int {
+	if in == nil {
+		return nil
+	}
+	out := make(map[int64]int, len(in))
+	for id, r := range in {
+		if _, ok := allowed[id]; ok {
+			out[id] = r
+		}
+	}
+	return out
 }
 
 // runSparse runs FTS5 BM25. SQLite returns BM25 as a negative value

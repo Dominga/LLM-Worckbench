@@ -43,8 +43,9 @@ type AgentContext struct {
 	// chats that never went through NewSessionModal.
 	Params map[string]any
 
-	Files *FileService
-	RAG   *RAGService
+	Files  *FileService
+	RAG    *RAGService
+	Memory *MemoryService
 }
 
 // ToolRegistry holds the set of tools available to the agent. Lookups
@@ -133,7 +134,7 @@ type searchSemanticTool struct{}
 
 func (searchSemanticTool) Name() string { return "search_semantic" }
 func (searchSemanticTool) Description() string {
-	return "Search project content using hybrid (dense vector + BM25) retrieval. Use this to find chunks relevant to the user's question before reading whole files."
+	return "Search project content using hybrid (dense vector + BM25) retrieval. Defaults to searching files (kinds=[\"content\"]). Pass kinds=[\"history\"] to search past session transcripts, or [\"content\",\"history\"] to query both at once."
 }
 func (searchSemanticTool) InputSchema() map[string]any {
 	return map[string]any{
@@ -149,6 +150,14 @@ func (searchSemanticTool) InputSchema() map[string]any {
 				"description": "Maximum number of hits to return. Defaults to 8.",
 				"minimum":     1,
 				"maximum":     50,
+			},
+			"kinds": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "string",
+					"enum": []string{"content", "history"},
+				},
+				"description": "Which chunk sources to consider. Defaults to [\"content\"].",
 			},
 		},
 	}
@@ -170,7 +179,17 @@ func (searchSemanticTool) Execute(ctx context.Context, ac *AgentContext, args ma
 			k = v
 		}
 	}
-	opts := SearchOptions{K: k, SparseOnly: ac.EmbedProfileID == ""}
+	var kinds []string
+	if raw, ok := args["kinds"]; ok {
+		if arr, ok := raw.([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok && s != "" {
+					kinds = append(kinds, s)
+				}
+			}
+		}
+	}
+	opts := SearchOptions{K: k, SparseOnly: ac.EmbedProfileID == "", Kinds: kinds}
 	hits, err := ac.RAG.Search(ctx, ac.ProjectID, ac.EmbedProfileID, query, opts)
 	if err != nil {
 		return nil, err
@@ -346,6 +365,86 @@ func (makeDirectoryTool) Execute(ctx context.Context, ac *AgentContext, args map
 	}, nil
 }
 
+// readMemoryTool returns the freeform notes file for the requested
+// scope. Read-only; safe to call without approval.
+type readMemoryTool struct{}
+
+func (readMemoryTool) Name() string { return "read_memory" }
+func (readMemoryTool) Description() string {
+	return "Read the freeform notes file for a scope. scope=\"global\" returns the per-user notes; scope=\"project\" returns the current project's notes. Missing files return an empty string. Use this before non-trivial tasks to recall prior context."
+}
+func (readMemoryTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"scope"},
+		"properties": map[string]any{
+			"scope": map[string]any{
+				"type":        "string",
+				"enum":        []string{"global", "project"},
+				"description": "Which memory.md to read.",
+			},
+		},
+	}
+}
+func (readMemoryTool) Execute(ctx context.Context, ac *AgentContext, args map[string]any) (any, error) {
+	if ac == nil || ac.Memory == nil {
+		return nil, errors.New("memory service unavailable")
+	}
+	scope, _ := args["scope"].(string)
+	body, err := ac.Memory.Read(MemoryScope(scope), ac.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"scope":   scope,
+		"bytes":   len(body),
+		"content": body,
+	}, nil
+}
+
+// appendMemoryTool adds a new entry to the bottom of the scope's
+// memory.md. Append-only: the model can't rewrite or delete older
+// entries from a tool call — destructive edits go through the UI.
+type appendMemoryTool struct{}
+
+func (appendMemoryTool) Name() string { return "append_memory" }
+func (appendMemoryTool) Description() string {
+	return "Append an entry (one or more markdown paragraphs) to the bottom of the scope's notes file, stamped with the current UTC time. scope=\"global\" for cross-project preferences, scope=\"project\" for project-specific lore. Subject to the active mode's approval policy."
+}
+func (appendMemoryTool) InputSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"scope", "entry"},
+		"properties": map[string]any{
+			"scope": map[string]any{
+				"type":        "string",
+				"enum":        []string{"global", "project"},
+				"description": "Which memory.md to append to.",
+			},
+			"entry": map[string]any{
+				"type":        "string",
+				"description": "Markdown body to append. Non-empty.",
+			},
+		},
+	}
+}
+func (appendMemoryTool) Execute(ctx context.Context, ac *AgentContext, args map[string]any) (any, error) {
+	if ac == nil || ac.Memory == nil {
+		return nil, errors.New("memory service unavailable")
+	}
+	scope, _ := args["scope"].(string)
+	entry, _ := args["entry"].(string)
+	n, err := ac.Memory.Append(MemoryScope(scope), ac.ProjectID, entry)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"scope":   scope,
+		"written": n,
+		"ok":      true,
+	}, nil
+}
+
 // RegisterBuiltinTools wires the M3-minimum tools into a registry.
 // Called once at app startup; project-local modes can later add more.
 func RegisterBuiltinTools(reg *ToolRegistry) {
@@ -354,4 +453,6 @@ func RegisterBuiltinTools(reg *ToolRegistry) {
 	reg.Register(readFileTool{})
 	reg.Register(editFileTool{})
 	reg.Register(makeDirectoryTool{})
+	reg.Register(readMemoryTool{})
+	reg.Register(appendMemoryTool{})
 }
