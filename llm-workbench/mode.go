@@ -116,6 +116,28 @@ type Mode struct {
 
 	// Context controls implicit RAG injection. See ContextStrategy doc.
 	Context ContextStrategy `json:"context,omitempty" toml:"context"`
+
+	// RecommendedFor is an advisory list of family IDs the mode's
+	// prompt was tuned for (e.g. ["qwen3", "qwen3.5"]). The picker
+	// shows a soft warning when the active profile's family isn't in
+	// the list. Empty = no recommendation; mode is treated as
+	// family-agnostic.
+	RecommendedFor []string `json:"recommendedFor,omitempty" toml:"recommended_for"`
+}
+
+// IsRecommendedFor reports whether `family` is in the mode's
+// recommended-families list. Always true when the list is empty (the
+// mode is family-agnostic).
+func (m Mode) IsRecommendedFor(family string) bool {
+	if len(m.RecommendedFor) == 0 {
+		return true
+	}
+	for _, f := range m.RecommendedFor {
+		if f == family {
+			return true
+		}
+	}
+	return false
 }
 
 // containsTool tells whether the whitelist permits a tool name. nil
@@ -375,11 +397,18 @@ func (s *ModeService) Resolve(projectID, modeID string) Mode {
 // SystemPromptTemplate when set, falling back to the inline
 // SystemPrompt) and substitutes `{{project.*}}` + `{{param.*}}`
 // placeholders. The agent loop calls this once per agent run with the
-// session's captured params.
-func (s *ModeService) ResolveSystemPrompt(projectID string, m Mode, params map[string]any) (string, error) {
+// session's captured params + the active profile's family hint.
+//
+// When `family` is non-empty, the template loader looks for family-
+// specific variants of the file before the default — e.g. for mode id
+// `agent` and family `qwen3` it tries `agent.qwen3.system.md` (and
+// `agent.qwen3.3.5.system.md` when familyVersion is set) before
+// falling back to plain `agent.system.md`. This lets authors ship
+// family-tuned prompts without touching the mode's TOML.
+func (s *ModeService) ResolveSystemPrompt(projectID string, m Mode, family, familyVersion string, params map[string]any) (string, error) {
 	tmpl := m.SystemPrompt
 	if strings.TrimSpace(m.SystemPromptTemplate) != "" {
-		body, err := s.loadTemplate(projectID, m.SystemPromptTemplate)
+		body, err := s.loadTemplate(projectID, m.SystemPromptTemplate, family, familyVersion)
 		if err != nil {
 			// Template miss falls back to the inline string rather than
 			// dropping the agent to no system prompt at all.
@@ -395,13 +424,17 @@ func (s *ModeService) ResolveSystemPrompt(projectID string, m Mode, params map[s
 }
 
 // loadTemplate resolves a relative template path against (in order):
-//  1. `<projectRoot>/.llm-workshop/modes/<value>`
-//  2. `<globalModesDir>/<value>`
-//  3. absolute path (when value is already absolute)
+//  1. absolute path (when value is already absolute)
+//  2. `<projectRoot>/.llm-workshop/modes/<candidate>`
+//  3. `<globalModesDir>/<candidate>`
 //
-// Absolute and project-rooted paths are accepted as-is. Used for both
-// the mode's SystemPromptTemplate field and any future include/import.
-func (s *ModeService) loadTemplate(projectID, path string) (string, error) {
+// `candidate` cycles through the family-aware list returned by
+// expandTemplateCandidates — family+version first, then family-only,
+// then the raw filename. Within each layer the first hit wins, so a
+// project-local default still beats a global family-specific variant
+// (the user's explicit project override is a stronger signal than a
+// family hint).
+func (s *ModeService) loadTemplate(projectID, path, family, familyVersion string) (string, error) {
 	if filepath.IsAbs(path) {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -409,21 +442,50 @@ func (s *ModeService) loadTemplate(projectID, path string) (string, error) {
 		}
 		return string(data), nil
 	}
+	candidates := expandTemplateCandidates(path, family, familyVersion)
 	if s.projects != nil && projectID != "" {
 		if p, err := s.projects.Get(projectID); err == nil {
-			candidate := filepath.Join(p.Path, ProjectDirName, "modes", path)
-			if data, err := os.ReadFile(candidate); err == nil {
-				return string(data), nil
+			for _, c := range candidates {
+				if data, err := os.ReadFile(filepath.Join(p.Path, ProjectDirName, "modes", c)); err == nil {
+					return string(data), nil
+				}
 			}
 		}
 	}
 	if g := globalModesDir(); g != "" {
-		candidate := filepath.Join(g, path)
-		if data, err := os.ReadFile(candidate); err == nil {
-			return string(data), nil
+		for _, c := range candidates {
+			if data, err := os.ReadFile(filepath.Join(g, c)); err == nil {
+				return string(data), nil
+			}
 		}
 	}
 	return "", fmt.Errorf("template %q not found in project or global modes dir", path)
+}
+
+// expandTemplateCandidates builds the family-aware lookup chain for a
+// `<id>.system.md`-style template basename. Empty family short-circuits
+// to just the base. The chain is ordered most-specific first:
+//
+//	expandTemplateCandidates("agent.system.md", "qwen3", "3.5") →
+//	    ["agent.qwen3.3.5.system.md",
+//	     "agent.qwen3.system.md",
+//	     "agent.system.md"]
+//
+// Filenames that don't end with `.system.md` (rare; future include
+// imports) fall through unchanged — there's no agreed split point so
+// family-suffix resolution skips them.
+func expandTemplateCandidates(base, family, familyVersion string) []string {
+	if family == "" || !strings.HasSuffix(base, ".system.md") {
+		return []string{base}
+	}
+	prefix := strings.TrimSuffix(base, ".system.md")
+	out := make([]string, 0, 3)
+	if strings.TrimSpace(familyVersion) != "" {
+		out = append(out, prefix+"."+family+"."+familyVersion+".system.md")
+	}
+	out = append(out, prefix+"."+family+".system.md")
+	out = append(out, base)
+	return out
 }
 
 // buildTemplateContext assembles the variable map fed to renderTemplate.
@@ -550,9 +612,10 @@ type modeFileDoc struct {
 	// "no tools" and must survive the round-trip (omitting it would load
 	// back as nil = "all tools").
 	ToolWhitelist []string       `toml:"tool_whitelist"`
-	Params        []modeParamDoc `toml:"params,omitempty"`
-	Approval      string         `toml:"approval,omitempty"`
-	Context       string         `toml:"context,omitempty"`
+	Params         []modeParamDoc `toml:"params,omitempty"`
+	Approval       string         `toml:"approval,omitempty"`
+	Context        string         `toml:"context,omitempty"`
+	RecommendedFor []string       `toml:"recommended_for,omitempty"`
 }
 
 // atomicWriteFile writes data to path via a temp file + rename.
@@ -603,6 +666,7 @@ func saveModeFileToDir(dir, modeID string, def Mode, template string) error {
 		ToolWhitelist:        def.ToolWhitelist,
 		Approval:             string(def.Approval),
 		Context:              string(def.Context),
+		RecommendedFor:       def.RecommendedFor,
 	}
 	if doc.ToolWhitelist == nil {
 		doc.ToolWhitelist = []string{}

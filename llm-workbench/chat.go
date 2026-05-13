@@ -209,6 +209,17 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			ac.ProjectID = projectID
 			ac.Mode = resolved
 			ac.Params = sess.Params
+			// Carry the active chat profile's family hint so
+			// ModeService.ResolveSystemPrompt can pick a family-specific
+			// `<id>.<family>.system.md` variant when the author shipped
+			// one. Unknown profile (e.g. project-unbound session) leaves
+			// the hint blank — resolver falls back to the default file.
+			if c.pm != nil {
+				if p, gErr := c.pm.Get(sess.ProfileID); gErr == nil {
+					ac.FamilyID = p.Family
+					ac.FamilyVersion = p.FamilyVersion
+				}
+			}
 			// Pre-loop git snapshot for `approval = "snapshot"` modes.
 			// Failures are non-fatal — we still let the loop run, but
 			// emit an event so the UI can warn the user that revert

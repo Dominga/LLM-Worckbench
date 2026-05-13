@@ -60,6 +60,39 @@ The agent's `read_memory` / `append_memory` tools target these same
 files, so notes the model leaves on one turn are visible to the
 template on the next.
 
+## Family-specific template variants
+
+A mode's `system_prompt_template` is a basename like `agent.system.md`. When
+the active chat profile carries a family tag, the loader looks for
+family-tuned variants of that file before falling back to the default:
+
+1. `<modeID>.<family>.<familyVersion>.system.md` — e.g.
+   `agent.qwen3.3.5.system.md`. Tried only when the profile has both fields.
+2. `<modeID>.<family>.system.md` — e.g. `agent.qwen3.system.md`.
+3. `<modeID>.system.md` — the default, used when none of the above exist.
+
+Each candidate is tried against the project-local modes dir first, then the
+global modes dir. A project-default file still beats a global family-specific
+variant (an explicit project override is a stronger user signal than a family
+hint).
+
+Authors who want to ship a Qwen3-specific tweak alongside the default just
+drop `agent.qwen3.system.md` next to `agent.system.md` — no TOML changes.
+
+## Mode `recommended_for` (advisory)
+
+The mode TOML may declare a `recommended_for` list of family IDs the prompt
+was tuned for:
+
+```toml
+recommended_for = ["qwen3", "qwen3.5"]
+```
+
+This is purely advisory — it never blocks a selection. The chat mode picker
+just renders a small warning badge when the active profile's family isn't in
+the list. Leaving the field empty (the default) means "no recommendation;
+treat as family-agnostic".
+
 ## Example template
 
 ```markdown

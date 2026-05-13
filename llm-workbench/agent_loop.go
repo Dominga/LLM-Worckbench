@@ -398,11 +398,15 @@ func resolveSystemPromptFor(c *ChatService, ac *AgentContext, mode Mode) string 
 	if c != nil && c.modes != nil {
 		projectID := ""
 		var params map[string]any
+		family := ""
+		familyVersion := ""
 		if ac != nil {
 			projectID = ac.ProjectID
 			params = ac.Params
+			family = ac.FamilyID
+			familyVersion = ac.FamilyVersion
 		}
-		if prompt, err := c.modes.ResolveSystemPrompt(projectID, mode, params); err == nil {
+		if prompt, err := c.modes.ResolveSystemPrompt(projectID, mode, family, familyVersion, params); err == nil {
 			return prompt
 		}
 	}

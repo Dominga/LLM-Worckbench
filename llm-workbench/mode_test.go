@@ -201,7 +201,7 @@ func TestResolveSystemPromptFromTemplate(t *testing.T) {
 	svc := NewModeService(prs)
 	m := Mode{ID: "narrative", SystemPromptTemplate: tmplPath}
 	m.normalise()
-	out, err := svc.ResolveSystemPrompt("p", m, map[string]any{"theme": "dread"})
+	out, err := svc.ResolveSystemPrompt("p", m, "", "", map[string]any{"theme": "dread"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestResolveSystemPromptFallsBackToInline(t *testing.T) {
 	svc := NewModeService(prs)
 	m := Mode{ID: "x", SystemPrompt: "inline prompt"}
 	m.normalise()
-	out, err := svc.ResolveSystemPrompt("p", m, nil)
+	out, err := svc.ResolveSystemPrompt("p", m, "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestResolveSystemPromptMissingTemplateErrs(t *testing.T) {
 	svc := NewModeService(prs)
 	m := Mode{ID: "x", SystemPromptTemplate: "ghost.md"}
 	m.normalise()
-	_, err := svc.ResolveSystemPrompt("p", m, nil)
+	_, err := svc.ResolveSystemPrompt("p", m, "", "", nil)
 	if err == nil {
 		t.Fatal("expected error for missing template without inline fallback")
 	}
@@ -308,4 +308,115 @@ func modeIDs(ms []Mode) []string {
 		out[i] = m.ID
 	}
 	return out
+}
+
+// TestExpandTemplateCandidates pins the family-aware candidate order.
+func TestExpandTemplateCandidates(t *testing.T) {
+	cases := []struct {
+		base, fam, ver string
+		want           []string
+	}{
+		{"agent.system.md", "", "", []string{"agent.system.md"}},
+		{"agent.system.md", "qwen3", "", []string{"agent.qwen3.system.md", "agent.system.md"}},
+		{"agent.system.md", "qwen3", "3.5", []string{"agent.qwen3.3.5.system.md", "agent.qwen3.system.md", "agent.system.md"}},
+		// Non-.system.md filenames fall through unchanged — there's no
+		// agreed split point for family suffixing.
+		{"weird.md", "qwen3", "3", []string{"weird.md"}},
+	}
+	for _, c := range cases {
+		got := expandTemplateCandidates(c.base, c.fam, c.ver)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("expand(%q, %q, %q) = %v, want %v", c.base, c.fam, c.ver, got, c.want)
+		}
+	}
+}
+
+// TestResolveSystemPromptFamilySuffix writes default + family + family-
+// version variants to a project modes dir and confirms ResolveSystemPrompt
+// picks the most specific match.
+func TestResolveSystemPromptFamilySuffix(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, ProjectDirName, "modes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("agent.system.md", "default body")
+	write("agent.qwen3.system.md", "qwen3 body")
+	write("agent.qwen3.3.5.system.md", "qwen3.5 body")
+
+	prs := &ProjectService{projects: []Project{{ID: "p", Path: tmp, Name: "T"}}}
+	svc := NewModeService(prs)
+	m := Mode{ID: "agent", SystemPromptTemplate: "agent.system.md"}
+	m.normalise()
+
+	cases := []struct {
+		fam, ver string
+		want     string
+	}{
+		{"", "", "default body"},
+		{"qwen3", "", "qwen3 body"},
+		{"qwen3", "3.5", "qwen3.5 body"},
+		{"qwen3", "9.9", "qwen3 body"}, // unknown version → falls back to family-only
+		{"llama3", "", "default body"}, // unknown family → falls back to default
+	}
+	for _, c := range cases {
+		got, err := svc.ResolveSystemPrompt("p", m, c.fam, c.ver, nil)
+		if err != nil {
+			t.Fatalf("%q/%q: %v", c.fam, c.ver, err)
+		}
+		if got != c.want {
+			t.Errorf("family=%q version=%q → %q, want %q", c.fam, c.ver, got, c.want)
+		}
+	}
+}
+
+// TestModeIsRecommendedFor covers the advisory soft-warning helper.
+func TestModeIsRecommendedFor(t *testing.T) {
+	none := Mode{}
+	if !none.IsRecommendedFor("qwen3") {
+		t.Error("empty recommended_for should accept any family")
+	}
+	if !none.IsRecommendedFor("") {
+		t.Error("empty recommended_for should accept blank family")
+	}
+	m := Mode{RecommendedFor: []string{"qwen3", "gemma3"}}
+	if !m.IsRecommendedFor("qwen3") {
+		t.Error("qwen3 should be recommended")
+	}
+	if m.IsRecommendedFor("llama3") {
+		t.Error("llama3 should NOT be recommended")
+	}
+	if m.IsRecommendedFor("") {
+		t.Error("blank family should NOT be recommended when list is non-empty")
+	}
+}
+
+// TestSaveProjectModeFileRecommendedForRoundTrip writes recommended_for
+// to disk and ensures the loader returns it intact.
+func TestSaveProjectModeFileRecommendedForRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	def := Mode{
+		Name:           "Roleplay",
+		Approval:       ApprovalAlways,
+		Context:        ContextRAGExplicit,
+		RecommendedFor: []string{"qwen3", "gemma3"},
+	}
+	if err := saveProjectModeFile(root, "roleplay", def, "body"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	modes, warns := loadModesDir(filepath.Join(root, ProjectDirName, "modes"), ModeSourceProject)
+	if len(warns) != 0 {
+		t.Errorf("warns: %v", warns)
+	}
+	if len(modes) != 1 {
+		t.Fatalf("got %d modes", len(modes))
+	}
+	if got := modes[0].RecommendedFor; len(got) != 2 || got[0] != "qwen3" || got[1] != "gemma3" {
+		t.Errorf("recommended_for round-trip lost: %v", got)
+	}
 }

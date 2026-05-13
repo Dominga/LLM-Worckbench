@@ -303,6 +303,17 @@ export function ChatTab({
   }, [activeProject?.ID]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const mode: Mode = modes.find((m) => m.id === modeId) || MODE_BY_ID[modeId] || MODES[0];
+  // Active chat profile's family — drives the mode-picker soft-warning
+  // when the chosen mode's recommended_for list doesn't include it.
+  const activeFamily =
+    profiles.find((p) => p.ID === activeProfileId)?.Family ?? '';
+  const modeRecommended = (m: Mode): boolean => {
+    const recs = (m as any).recommendedFor as string[] | undefined;
+    if (!recs || recs.length === 0) return true; // unrestricted
+    if (!activeFamily) return true; // no profile family to compare against
+    return recs.includes(activeFamily);
+  };
+  const currentModeRecommended = modeRecommended(mode);
 
   const setMode = (id: string) => {
     setModeId(id);
@@ -695,11 +706,23 @@ export function ChatTab({
             )}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, fontSize: 11.5, flexWrap: 'wrap' }}>
-            <ModePill mode={mode} open={pickerOpen} onToggle={() => setPickerOpen((o) => !o)}>
+            <ModePill
+              mode={mode}
+              open={pickerOpen}
+              onToggle={() => setPickerOpen((o) => !o)}
+              warn={
+                !currentModeRecommended
+                  ? `This mode was tuned for: ${(mode as any).recommendedFor?.join(', ')}. ` +
+                    `Active profile family: ${activeFamily || '(none)'}.`
+                  : null
+              }
+            >
               {pickerOpen && (
                 <ModePicker
                   modes={modes}
                   modeId={modeId}
+                  activeFamily={activeFamily}
+                  isRecommended={modeRecommended}
                   onSelect={setMode}
                   onClose={() => setPickerOpen(false)}
                 />
@@ -1652,18 +1675,20 @@ function ModePill({
   mode,
   open,
   onToggle,
+  warn,
   children,
 }: {
   mode: Mode;
   open: boolean;
   onToggle: () => void;
+  warn?: string | null;
   children?: React.ReactNode;
 }) {
   return (
-    <span style={{ position: 'relative' }}>
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <button
         onClick={onToggle}
-        title="Change mode for this session"
+        title={warn || 'Change mode for this session'}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -1691,6 +1716,27 @@ function ModePill({
         {mode.name}
         <IconChevronDown size={9} style={{ opacity: 0.8 }} />
       </button>
+      {warn && (
+        <span
+          title={warn}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 16,
+            height: 16,
+            borderRadius: 8,
+            background: '#f59e0b22',
+            color: '#f59e0b',
+            fontSize: 10,
+            fontWeight: 700,
+            border: '1px solid #f59e0b55',
+            cursor: 'help',
+          }}
+        >
+          !
+        </span>
+      )}
       {open && children}
     </span>
   );
@@ -1699,11 +1745,15 @@ function ModePill({
 function ModePicker({
   modes,
   modeId,
+  activeFamily,
+  isRecommended,
   onSelect,
   onClose,
 }: {
   modes: Mode[];
   modeId: string;
+  activeFamily: string;
+  isRecommended: (m: Mode) => boolean;
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
@@ -1772,24 +1822,43 @@ function ModePicker({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 12.5, fontWeight: 500, color: V5.text }}>{m.name}</span>
+                  {!isRecommended(m) && (
+                    <span
+                      title={`Tuned for: ${((m as any).recommendedFor as string[] | undefined)?.join(', ') || '—'}. Active family: ${activeFamily || '(none)'}.`}
+                      style={{
+                        fontSize: 9,
+                        color: '#f59e0b',
+                        background: '#f59e0b22',
+                        border: '1px solid #f59e0b55',
+                        borderRadius: 3,
+                        padding: '0 4px',
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      ! family
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: V5.textMuted, marginTop: 1 }}>{m.desc}</div>
               </div>
             </button>
           );
         })}
-        <div
-          style={{
-            borderTop: `1px solid ${V5.borderSoft}`,
-            marginTop: 4,
-            padding: '6px 10px',
-            fontSize: 11,
-            color: V5.textDim,
-            fontStyle: 'italic',
-          }}
-        >
-          Demo only — mode does not affect prompt yet (M3).
-        </div>
+        {activeFamily && (
+          <div
+            style={{
+              borderTop: `1px solid ${V5.borderSoft}`,
+              marginTop: 4,
+              padding: '6px 10px',
+              fontSize: 10.5,
+              color: V5.textDim,
+              fontStyle: 'italic',
+            }}
+          >
+            Active profile family: {activeFamily}
+          </div>
+        )}
       </div>
     </>
   );

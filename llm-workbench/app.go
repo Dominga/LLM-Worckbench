@@ -382,9 +382,11 @@ func (a *App) PreviewModeTemplate(projectID, modeID, source string, params map[s
 		return "", fmt.Errorf("modes not available")
 	}
 	if strings.TrimSpace(source) == "" {
-		// Persisted template path.
+		// Persisted template path. Preview pane has no active chat
+		// profile, so family-suffix resolution is skipped (empty
+		// family/version → ResolveSystemPrompt loads the default file).
 		m := a.modes.Resolve(projectID, modeID)
-		return a.modes.ResolveSystemPrompt(projectID, m, params)
+		return a.modes.ResolveSystemPrompt(projectID, m, "", "", params)
 	}
 	return a.modes.RenderWithSource(projectID, source, params), nil
 }

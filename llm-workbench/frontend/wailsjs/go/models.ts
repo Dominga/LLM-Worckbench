@@ -660,6 +660,7 @@ export namespace main {
 	    toolWhitelist?: string[];
 	    approval?: string;
 	    context?: string;
+	    recommendedFor?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Mode(source);
@@ -679,6 +680,7 @@ export namespace main {
 	        this.toolWhitelist = source["toolWhitelist"];
 	        this.approval = source["approval"];
 	        this.context = source["context"];
+	        this.recommendedFor = source["recommendedFor"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

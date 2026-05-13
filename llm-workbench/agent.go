@@ -46,6 +46,13 @@ type AgentContext struct {
 	Files  *FileService
 	RAG    *RAGService
 	Memory *MemoryService
+
+	// FamilyID + FamilyVersion are the active chat profile's family
+	// hint, used by ModeService to pick family-specific prompt
+	// template variants. Empty for project-unbound chats or profiles
+	// that haven't been tagged yet.
+	FamilyID      string
+	FamilyVersion string
 }
 
 // ToolRegistry holds the set of tools available to the agent. Lookups
