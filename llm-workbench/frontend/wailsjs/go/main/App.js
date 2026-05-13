@@ -86,6 +86,10 @@ export function DetectGPU() {
   return window['go']['main']['App']['DetectGPU']();
 }
 
+export function GetAppSettings() {
+  return window['go']['main']['App']['GetAppSettings']();
+}
+
 export function GetBuild(arg1) {
   return window['go']['main']['App']['GetBuild'](arg1);
 }
@@ -272,6 +276,10 @@ export function RevertLastAgentSnapshot(arg1, arg2) {
 
 export function RunScript(arg1, arg2) {
   return window['go']['main']['App']['RunScript'](arg1, arg2);
+}
+
+export function SaveAppSettings(arg1) {
+  return window['go']['main']['App']['SaveAppSettings'](arg1);
 }
 
 export function SaveMode(arg1, arg2, arg3, arg4, arg5) {

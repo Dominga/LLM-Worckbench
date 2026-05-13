@@ -33,6 +33,7 @@ type App struct {
 	memory    *MemoryService
 	families  *FamilyService
 	registry2 *RegistryService // TD33 external registry (sources / install / browse)
+	settings  *SettingsService
 	approvals *ApprovalManager
 	snapshots *SnapshotService
 	scripting *ScriptingService
@@ -116,20 +117,32 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.families = NewFamilyService()
 	a.registry2 = NewRegistryService()
+	a.settings = NewSettingsService()
+	appSettings, sErr := a.settings.Load()
+	if sErr != nil {
+		wruntime.LogWarningf(ctx, "load app settings: %v", sErr)
+		appSettings = DefaultAppSettings()
+	}
 	seeded, err := a.registry2.SeedDefaultSourceOnce()
 	if err != nil {
 		wruntime.LogWarningf(ctx, "seed default registry source: %v", err)
 	}
-	// On fresh installs (sources.toml just created) reach out to the
-	// official registry in the background and auto-install every
-	// `default_install` artifact — that's how the agent / auto-edit /
-	// research modes land for new users now that they no longer ship
-	// in the binary. Skipped silently when offline; the user can run
-	// it from Settings → Registry later.
-	if seeded {
+	// Background registry refresh / auto-install. Gated by the
+	// AppSettings switches so the user can disable network chatter on
+	// launch. Fresh installs always run auto-install once (so the
+	// default modes land out of the box); subsequent runs only do so
+	// when the AutoInstallDefaults toggle is on.
+	shouldAutoInstall := seeded || appSettings.AutoInstallDefaults
+	if appSettings.AutoRefreshRegistry || shouldAutoInstall {
 		go func() {
-			if err := a.registry2.AutoInstallDefaults(); err != nil {
-				wruntime.LogWarningf(ctx, "auto-install default registry artifacts: %v", err)
+			if shouldAutoInstall {
+				if err := a.registry2.AutoInstallDefaults(); err != nil {
+					wruntime.LogWarningf(ctx, "auto-install default registry artifacts: %v", err)
+				}
+				return // AutoInstallDefaults already refreshed every source
+			}
+			if _, err := a.registry2.RefreshAll(); err != nil {
+				wruntime.LogWarningf(ctx, "registry refresh on launch: %v", err)
 			}
 		}()
 	}
@@ -330,6 +343,27 @@ func (a *App) ListFamilies() []Family {
 		return nil
 	}
 	return a.families.List()
+}
+
+// ─────────────────────── App settings (TD23) ────────────────────
+
+// GetAppSettings returns the persisted app-wide preferences (theme,
+// startup mode, registry-refresh policy, telemetry opt-in). Missing
+// file yields the defaults rather than an error so the UI form
+// always has values to render.
+func (a *App) GetAppSettings() (AppSettings, error) {
+	if a.settings == nil {
+		return DefaultAppSettings(), nil
+	}
+	return a.settings.Load()
+}
+
+// SaveAppSettings persists the user's preferences.
+func (a *App) SaveAppSettings(set AppSettings) error {
+	if a.settings == nil {
+		return fmt.Errorf("settings service unavailable")
+	}
+	return a.settings.Save(set)
 }
 
 // ─────────────────────── Registry (TD33) ────────────────────────

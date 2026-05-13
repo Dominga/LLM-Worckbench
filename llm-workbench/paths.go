@@ -139,3 +139,15 @@ func registryCacheDir(sourceID string) string {
 	}
 	return filepath.Join(d, "cache", sourceID)
 }
+
+// settingsPath is `~/.config/llm-workbench/settings.toml`. Global
+// app preferences (theme, startup, registry-refresh policy,
+// telemetry opt-in). Loaded lazily by SettingsService; defaults are
+// returned when the file is absent.
+func settingsPath() string {
+	d, err := configDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "settings.toml")
+}

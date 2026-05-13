@@ -44,6 +44,8 @@ export function DetectFamily(arg1:string):Promise<main.FamilyGuess>;
 
 export function DetectGPU():Promise<main.GPUDetection>;
 
+export function GetAppSettings():Promise<main.AppSettings>;
+
 export function GetBuild(arg1:string):Promise<main.Build>;
 
 export function GetBuildLog(arg1:string):Promise<Array<string>>;
@@ -137,6 +139,8 @@ export function RestartProfile(arg1:string):Promise<void>;
 export function RevertLastAgentSnapshot(arg1:string,arg2:string):Promise<main.AgentSnapshot>;
 
 export function RunScript(arg1:string,arg2:string):Promise<main.ScriptResult>;
+
+export function SaveAppSettings(arg1:main.AppSettings):Promise<void>;
 
 export function SaveMode(arg1:string,arg2:string,arg3:string,arg4:main.Mode,arg5:string):Promise<void>;
 

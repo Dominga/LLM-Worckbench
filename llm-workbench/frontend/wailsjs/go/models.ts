@@ -41,6 +41,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class AppSettings {
+	    schemaVersion: number;
+	    theme: string;
+	    startup: string;
+	    autoRefreshRegistry: boolean;
+	    autoInstallDefaults: boolean;
+	    telemetryOptIn: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.schemaVersion = source["schemaVersion"];
+	        this.theme = source["theme"];
+	        this.startup = source["startup"];
+	        this.autoRefreshRegistry = source["autoRefreshRegistry"];
+	        this.autoInstallDefaults = source["autoInstallDefaults"];
+	        this.telemetryOptIn = source["telemetryOptIn"];
+	    }
+	}
 	export class BrowseFilter {
 	    type?: string;
 	    query?: string;
