@@ -1,4 +1,4 @@
-import { CSSProperties, useState } from 'react';
+import { CSSProperties, useMemo, useState } from 'react';
 import {
   IconPlus,
   IconFolder,
@@ -8,6 +8,8 @@ import {
   IconEdit,
   IconCopy,
   IconTrash,
+  IconChevronDown,
+  IconChevronRight,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { V5 } from '../theme';
@@ -56,8 +58,36 @@ export function ServersTab({
 }: ServersTabProps) {
   const [filter, setFilter] = useState<Kind>('all');
   const [logsTab, setLogsTab] = useState<'logs' | 'config' | 'metrics'>('logs');
+  // Per-family collapse state. Defaults to expanded; closed groups
+  // persist for the session via state (localStorage is overkill for
+  // such a small preference).
+  const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>({});
 
   const visible = filter === 'all' ? profiles : profiles.filter((p) => p.Kind === filter);
+
+  // Group visible profiles by family. "" → "uncategorized" bucket
+  // rendered last so it doesn't dominate the top when most profiles
+  // are still untagged.
+  const familyGroups = useMemo(() => {
+    const groups = new Map<string, Profile[]>();
+    for (const p of visible) {
+      const key = ((p as any).Family || '').toString().trim() || '';
+      const arr = groups.get(key) ?? [];
+      arr.push(p);
+      groups.set(key, arr);
+    }
+    const named = Array.from(groups.entries())
+      .filter(([k]) => k !== '')
+      .sort(([a], [b]) => a.localeCompare(b));
+    const uncategorized = groups.get('') ?? [];
+    if (uncategorized.length > 0) {
+      named.push(['', uncategorized]);
+    }
+    return named;
+  }, [visible]);
+
+  const toggleFamilyCollapse = (key: string) =>
+    setCollapsedFamilies((s) => ({ ...s, [key]: !s[key] }));
 
   const selected = profiles.find((p) => p.ID === activeProfileId) || profiles[0];
   const selectedStatus = selected
@@ -304,20 +334,52 @@ export function ServersTab({
                 No profiles match this filter.
               </div>
             )}
-            {visible.map((p) => (
-              <ServerRow
-                key={p.ID}
-                profile={p}
-                status={statusByProfile[p.ID]}
-                metrics={metricsByProfile[p.ID]}
-                isSelected={selected?.ID === p.ID}
-                onSelect={() => onSelectProfile(p.ID)}
-                onStart={() => onStart(p.ID)}
-                onStop={() => onStop(p.ID)}
-                onRestart={() => onRestart(p.ID)}
-                onEdit={() => onEditProfile(p)}
-              />
-            ))}
+            {familyGroups.map(([family, group]) => {
+              const collapsed = !!collapsedFamilies[family];
+              const label = family === '' ? 'Uncategorized' : family;
+              return (
+                <div key={family || '__uncat'}>
+                  <button
+                    onClick={() => toggleFamilyCollapse(family)}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 10px',
+                      background: 'transparent',
+                      border: 'none',
+                      borderBottom: `1px solid ${V5.borderSoft}`,
+                      cursor: 'pointer',
+                      color: V5.textMuted,
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    {collapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}
+                    <span>{label}</span>
+                    <span style={{ color: V5.textDim }}>· {group.length}</span>
+                  </button>
+                  {!collapsed &&
+                    group.map((p) => (
+                      <ServerRow
+                        key={p.ID}
+                        profile={p}
+                        status={statusByProfile[p.ID]}
+                        metrics={metricsByProfile[p.ID]}
+                        isSelected={selected?.ID === p.ID}
+                        onSelect={() => onSelectProfile(p.ID)}
+                        onStart={() => onStart(p.ID)}
+                        onStop={() => onStop(p.ID)}
+                        onRestart={() => onRestart(p.ID)}
+                        onEdit={() => onEditProfile(p)}
+                      />
+                    ))}
+                </div>
+              );
+            })}
           </div>
         </div>
 

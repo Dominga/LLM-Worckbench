@@ -36,6 +36,8 @@ export function DeleteScript(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteSession(arg1:string,arg2:string):Promise<void>;
 
+export function DetectFamily(arg1:string):Promise<main.FamilyGuess>;
+
 export function DetectGPU():Promise<main.GPUDetection>;
 
 export function GetBuild(arg1:string):Promise<main.Build>;

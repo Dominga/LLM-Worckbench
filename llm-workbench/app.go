@@ -321,6 +321,22 @@ func (a *App) ListFamilies() []Family {
 	return a.families.List()
 }
 
+// DetectFamily reads a GGUF file's header and returns a best-guess
+// family + family_version plus the raw architecture / name strings
+// for display. Missing file or non-GGUF input yields empty fields
+// without error — autodetect is advisory; the UI lets the user fix
+// it by hand.
+func (a *App) DetectFamily(ggufPath string) (FamilyGuess, error) {
+	info, err := ParseGGUFHeader(ggufPath)
+	if err != nil {
+		return FamilyGuess{}, err
+	}
+	if info.Architecture == "" && info.Name == "" {
+		return FamilyGuess{}, nil
+	}
+	return GuessFamilyFromArch(info.Architecture, info.Name), nil
+}
+
 // ReadMemory returns the contents of the requested memory.md. `scope`
 // is "global" or "project"; projectID is required only for the project
 // scope. Missing files yield an empty string.

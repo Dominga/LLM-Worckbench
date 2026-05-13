@@ -333,6 +333,24 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class FamilyGuess {
+	    family: string;
+	    familyVersion: string;
+	    architecture: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FamilyGuess(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.family = source["family"];
+	        this.familyVersion = source["familyVersion"];
+	        this.architecture = source["architecture"];
+	        this.name = source["name"];
+	    }
+	}
 	export class FileContent {
 	    path: string;
 	    bytes: number;
@@ -719,6 +737,8 @@ export namespace main {
 	    Autostart: boolean;
 	    HealthTimeoutSec: number;
 	    ToolMode: string;
+	    Family: string;
+	    FamilyVersion: string;
 	    // Go type: time
 	    CreatedAt: any;
 	    // Go type: time
@@ -748,6 +768,8 @@ export namespace main {
 	        this.Autostart = source["Autostart"];
 	        this.HealthTimeoutSec = source["HealthTimeoutSec"];
 	        this.ToolMode = source["ToolMode"];
+	        this.Family = source["Family"];
+	        this.FamilyVersion = source["FamilyVersion"];
 	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
 	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
 	    }

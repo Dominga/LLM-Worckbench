@@ -10,11 +10,12 @@ import {
   Button,
   ActionIcon,
   Textarea,
+  Autocomplete,
   Divider,
   Text,
   Box,
 } from '@mantine/core';
-import { IconFolder, IconFile } from '@tabler/icons-react';
+import { IconFolder, IconFile, IconSparkles } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
   CreateProfile,
@@ -22,6 +23,8 @@ import {
   PickFile,
   PickDirectory,
   ListBuilds,
+  ListFamilies,
+  DetectFamily,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 import { Profile } from '../shell/types';
@@ -57,6 +60,8 @@ type FormState = {
   Autostart: boolean;
   HealthTimeoutSec: number;
   ToolMode: '' | 'native' | 'react' | 'none';
+  Family: string;
+  FamilyVersion: string;
   SamplingTemperature: number;
   SamplingTopP: number;
   SamplingMinP: number;
@@ -82,6 +87,8 @@ function emptyForm(): FormState {
     Autostart: false,
     HealthTimeoutSec: 120,
     ToolMode: '',
+    Family: '',
+    FamilyVersion: '',
     SamplingTemperature: 0.7,
     SamplingTopP: 0.95,
     SamplingMinP: 0.05,
@@ -108,6 +115,8 @@ function fromProfile(p: Profile): FormState {
     Autostart: p.Autostart || false,
     HealthTimeoutSec: p.HealthTimeoutSec || 120,
     ToolMode: ((p as any).ToolMode || '') as FormState['ToolMode'],
+    Family: (p as any).Family || '',
+    FamilyVersion: (p as any).FamilyVersion || '',
     SamplingTemperature: p.Sampling?.Temperature ?? 0.7,
     SamplingTopP: p.Sampling?.TopP ?? 0.95,
     SamplingMinP: p.Sampling?.MinP ?? 0.05,
@@ -137,6 +146,8 @@ function toProfile(f: FormState): Profile {
     Autostart: f.Autostart,
     HealthTimeoutSec: f.HealthTimeoutSec,
     ToolMode: f.ToolMode,
+    Family: f.Family.trim(),
+    FamilyVersion: f.FamilyVersion.trim(),
     Sampling: new main.Sampling({
       Temperature: f.SamplingTemperature,
       TopP: f.SamplingTopP,
@@ -163,6 +174,8 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [builds, setBuilds] = useState<main.Build[]>([]);
+  const [families, setFamilies] = useState<main.Family[]>([]);
+  const [detecting, setDetecting] = useState(false);
 
   useEffect(() => {
     if (!opened) return;
@@ -170,7 +183,38 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
     ListBuilds()
       .then((bs) => setBuilds(bs ?? []))
       .catch(() => setBuilds([]));
+    ListFamilies()
+      .then((fs) => setFamilies(fs ?? []))
+      .catch(() => setFamilies([]));
   }, [opened, mode, initial]);
+
+  const onDetectFamily = async () => {
+    if (!form.ModelPath || detecting) return;
+    setDetecting(true);
+    try {
+      const g = await DetectFamily(form.ModelPath);
+      if (!g || !g.family) {
+        notifications.show({
+          color: 'yellow',
+          title: 'Family not detected',
+          message: g?.architecture
+            ? `Architecture: ${g.architecture}. Pick a family manually.`
+            : 'Could not read GGUF header. Pick a family manually.',
+        });
+        return;
+      }
+      setForm((f) => ({ ...f, Family: g.family, FamilyVersion: g.familyVersion || '' }));
+      notifications.show({
+        color: 'teal',
+        title: 'Family detected',
+        message: `${g.family}${g.familyVersion ? ' ' + g.familyVersion : ''} (${g.architecture || '?'})`,
+      });
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Detect failed', message: String(e?.message ?? e) });
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -313,6 +357,33 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
           icon="file"
           required
         />
+
+        <Group grow align="flex-end">
+          <Autocomplete
+            label="Family"
+            description="Advisory model-family tag. Drives Servers-tab grouping and (future) family-specific prompt variants. Free-form — pick a known value or type your own."
+            data={families.map((f) => ({ value: f.id, label: f.name || f.id }))}
+            value={form.Family}
+            onChange={(v) => update('Family', v)}
+            placeholder="qwen3 / gemma3 / llama3 / …"
+          />
+          <TextInput
+            label="Family version (optional)"
+            value={form.FamilyVersion}
+            onChange={(e) => update('FamilyVersion', e.currentTarget.value)}
+            placeholder="3.5"
+          />
+          <Button
+            variant="default"
+            leftSection={<IconSparkles size={14} />}
+            onClick={onDetectFamily}
+            loading={detecting}
+            disabled={!form.ModelPath}
+            title="Read general.architecture + general.name from the GGUF header"
+          >
+            Detect
+          </Button>
+        </Group>
 
         <Divider label="Optional companion models" labelPosition="left" />
 

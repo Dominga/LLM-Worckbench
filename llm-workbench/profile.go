@@ -85,6 +85,13 @@ type Profile struct {
 	//   "none"    — never inject tools regardless of mode whitelist;
 	//               useful for fine-tunes that ignore both protocols.
 	ToolMode    string      `toml:"tool_mode,omitempty"`
+	// Family + FamilyVersion are advisory descriptors (TD31). The
+	// supervisor doesn't read them — they drive UI grouping (Servers
+	// tab) and prompt-template family-suffix resolution (TD32). Free-
+	// form strings; canonical values come from the family registry
+	// (~/.config/llm-workbench/families/). Empty = unclassified.
+	Family        string    `toml:"family,omitempty"`
+	FamilyVersion string    `toml:"family_version,omitempty"`
 	CreatedAt   time.Time   `toml:"created_at"`
 	UpdatedAt   time.Time   `toml:"updated_at"`
 }
