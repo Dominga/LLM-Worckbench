@@ -116,6 +116,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.families = NewFamilyService()
 	a.registry2 = NewRegistryService()
+	if err := a.registry2.SeedDefaultSourceOnce(); err != nil {
+		wruntime.LogWarningf(ctx, "seed default registry source: %v", err)
+	}
 	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
 	// global modes dir on first launch. Subsequent launches leave the
 	// dir alone so user edits persist.

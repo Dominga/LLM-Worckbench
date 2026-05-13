@@ -29,6 +29,7 @@ import {
 } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import { TitleBar } from './shell/TitleBar';
+import { SettingsModal } from './components/SettingsModal';
 import { Sidebar } from './shell/Sidebar';
 import { MainPane } from './shell/MainPane';
 import { ResizeFrame } from './shell/ResizeFrame';
@@ -57,6 +58,7 @@ const FILE_TREE_POLL_MS = 3000;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('chat');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [segment, setSegment] = useState<SidebarSegment>('sessions');
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -636,7 +638,9 @@ export default function App() {
         onCreateProject={onCreateProjectAction}
         onSelectProject={onSelectProject}
         onDeleteProject={onDeleteProjectAction}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
+      <SettingsModal opened={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Sidebar

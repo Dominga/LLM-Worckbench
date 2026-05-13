@@ -51,6 +51,7 @@ export type TitleBarProps = {
   onCreateProject: () => void;
   onSelectProject: (id: string) => void;
   onDeleteProject: (p: Project) => void;
+  onOpenSettings: () => void;
 };
 
 export function TitleBar({
@@ -64,6 +65,7 @@ export function TitleBar({
   onCreateProject,
   onSelectProject,
   onDeleteProject,
+  onOpenSettings,
 }: TitleBarProps) {
   const dotColor =
     activeStatus.state === 'running'
@@ -162,7 +164,22 @@ export function TitleBar({
           onDelete={onDeleteProject}
         />
         <IconBell size={15} />
-        <IconSettings size={15} />
+        <button
+          onClick={onOpenSettings}
+          title="Settings"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: V5.textMuted,
+            cursor: 'pointer',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'center',
+            ...noDragStyle,
+          }}
+        >
+          <IconSettings size={15} />
+        </button>
       </div>
 
       {/* Window controls */}

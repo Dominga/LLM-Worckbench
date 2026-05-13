@@ -137,6 +137,28 @@ func NewRegistryService() *RegistryService {
 	}
 }
 
+// defaultRegistrySourceURL is the curated GitHub-hosted index that the
+// app subscribes to on first launch. Users can drop it via
+// RemoveSource if they don't want it.
+const defaultRegistrySourceURL = "https://raw.githubusercontent.com/Dominga/llm-workbench-registry/main/index.json"
+
+// SeedDefaultSourceOnce writes the default subscribed source into
+// sources.toml on first launch. No-op when the file already exists —
+// preserves user edits + dropped subscriptions across restarts.
+func (s *RegistryService) SeedDefaultSourceOnce() error {
+	path := registrySourcesPath()
+	if path == "" {
+		return errors.New("registry path unresolved")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil // user state already exists
+	}
+	if _, err := s.AddSource("Official Registry", defaultRegistrySourceURL); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SetHTTPClient swaps the underlying http.Client. Tests use this to
 // route requests at a httptest.Server.
 func (s *RegistryService) SetHTTPClient(c *http.Client) {
