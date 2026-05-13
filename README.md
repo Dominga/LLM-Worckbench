@@ -1,20 +1,33 @@
 # LLM Workbench
 
-Local LLM workbench — Wails + llama.cpp desktop app for chat, RAG, and agent workflows over your own models.
+Local LLM workbench — Wails + llama.cpp desktop app for chat, RAG, and agent workflows over your own models. Primary use case is narrative writing and game design; the agent toolset is general enough for coding too.
 
-> **Status:** Milestone 2 (RAG) in progress. M0 (spike) and M1 (MVP — multi-profile supervisor, projects, sessions, V5 UI) shipped. Agent loop and scripting layer remain.
+> **Status:** M1–M5 shipped. Only **M6 — polish** (reranker, hot-swap, multimodal `mmproj`, SillyTavern character-card import, installers) is open. PR-by-PR history lives in `git log` and [DESIGN.md](DESIGN.md) §9; the active backlog is in [TODO.md](TODO.md).
 
 ## What it is
 
-A self-hosted desktop workspace for working with local LLMs served by [`llama.cpp`](https://github.com/ggerganov/llama.cpp) (or forks such as [`ik_llama.cpp`](https://github.com/ikawrakow/ik_llama.cpp)). The app supervises `llama-server` as a subprocess and talks to it over its OpenAI-compatible HTTP API. The frontend is a Markdown editor (CodeMirror 6) with streaming chat in the side panel.
+A self-hosted desktop workspace for working with local LLMs served by [`llama.cpp`](https://github.com/ggerganov/llama.cpp) (or forks such as [`ik_llama.cpp`](https://github.com/ikawrakow/ik_llama.cpp)). The app supervises `llama-server` as a subprocess and talks to it over its OpenAI-compatible HTTP API. The frontend pairs a Markdown editor (CodeMirror 6) with a streaming chat pane, a per-project file tree, the Prompt Lab (mode + script editor), and the Servers tab for managing profiles + builds.
 
-The long-term goal is a workbench around three primitives:
+The workbench is built around three primitives:
 
-- **Profile** = `Build` × `ModelBundle` × `RuntimeArgs` — a fully described way to run one model.
-- **Project** = a directory with `project.toml`, `.git`, an SQLite + `sqlite-vec` index, and content files.
-- **Mode** = system prompt + tool whitelist + context strategy used by the agent loop.
+- **Profile** = `Build` × `ModelBundle` × `RuntimeArgs` — a fully described way to run one model. Multiple profiles can run in parallel (e.g. chat + embedding sidecar).
+- **Project** = a directory with `project.toml`, optional `.git`, the per-project state dir `.llm-workshop/` (sessions, RAG `index.db`, modes overrides, `memory.md`), and content files.
+- **Mode** = system prompt + tool whitelist + approval policy + context strategy used by the agent loop. Modes are TOML + Markdown files; bundled set seeds into the global modes dir on first launch and can be overridden per project.
 
 See [DESIGN.md](DESIGN.md) for the full design doc (in Russian).
+
+## Features
+
+- **Streaming chat** over the OpenAI-compatible API with cancel, token-throughput pill, and per-session JSONL transcripts.
+- **Multi-profile supervisor** with per-profile autostart, health checks, log capture, GPU metrics, and a Servers tab.
+- **Projects** with per-project sessions, modes, RAG index, memory, and snapshot-based revert.
+- **Hybrid RAG** (BM25 via SQLite FTS5 + dense vectors via `sqlite-vec`) over project content; auto-reindex on file save; per-file delta updates. Session transcripts are indexed too (`source="history"`) and `search_semantic` accepts a `kinds` filter to choose between project content and conversation history.
+- **Agent loop** with native function calling + ReAct fallback. Built-in tools: `search_semantic`, `read_file`, `list_files`, `edit_file`, `make_directory`, `read_memory`, `append_memory`. Writes go through an approval modal (`approval=always`) or a git snapshot (`approval=snapshot`); `approval=auto` is read-only-safe.
+- **Modes as files** — TOML + `<id>.system.md` template with placeholder substitution. Editable in the Prompt Lab; scope toggle (project override vs. global edit) plus a "remove override" button.
+- **Memory.md** — append-only freeform notes per scope (`~/.config/llm-workbench/memory.md` global, `<project>/.llm-workshop/memory.md` project). Auto-injected into mode prompts via `{{memory.global}}` / `{{memory.project}}`; the agent can record durable facts with `append_memory` and recall them via `read_memory`. See [`llm-workbench/docs/prompt-variables.md`](llm-workbench/docs/prompt-variables.md) for the full template-variable reference.
+- **Prompt Lab** with a mode-template editor (placeholder highlighting + live preview) and a scripts pane (JS sandboxed via goja, exposes `app.tools.run(...)`, `app.llm.chat(...)`, etc.).
+- **Build orchestrator** (M5) — fetch `llama.cpp` source, configure, build, register the resulting binary as a `Build` you can pin profiles against.
+- **Frameless window** with custom title bar (TD5); resizable chat ↔ file split with collapsible chat side (TD6); project-unbound "blank chat" start (TD22).
 
 ## Stack
 
@@ -26,12 +39,30 @@ See [DESIGN.md](DESIGN.md) for the full design doc (in Russian).
 
 ```
 .
-├── DESIGN.md          # Authoritative design document (RU)
-├── llm-workbench/     # Wails desktop app (Go + React)
-│   ├── *.go           # App, supervisor, chat service, profiles, paths…
-│   ├── frontend/      # React + Mantine + CodeMirror UI
-│   └── vendor/        # Vendored Go deps (committed)
+├── DESIGN.md                  # Authoritative design document (RU)
+├── TODO.md                    # Open bugs + tech-debt backlog (M1–M5 closed)
+├── llm-workbench/
+│   ├── *.go                   # App, supervisor, chat, profiles, projects,
+│   │                          # rag, indexer, agent loop, modes, memory…
+│   ├── modes/                 # Bundled mode definitions (.toml + .system.md)
+│   ├── docs/                  # Reference docs (prompt-variables.md, …)
+│   ├── frontend/              # React + Mantine + CodeMirror UI
+│   │   ├── src/tabs/          # ChatTab, ServersTab, LabTab, RagTab, …
+│   │   ├── src/components/    # ApprovalModal, Editor, …
+│   │   └── wailsjs/           # Auto-generated Go bindings (committed)
+│   └── vendor/                # Vendored Go deps (committed)
 └── README.md
+```
+
+Per-project state lives under `<project>/.llm-workshop/`:
+
+```
+.llm-workshop/
+├── sessions/<id>.jsonl   # Chat transcripts (also indexed as source="history")
+├── modes/                # Project-local mode overrides
+├── memory.md             # Project-scope agent notes
+├── index.db              # SQLite + FTS5 + sqlite-vec RAG index
+└── project.toml          # Indexing globs and other project metadata
 ```
 
 ## Build & run
@@ -138,7 +169,17 @@ Commit `go.mod`, `go.sum`, and `vendor/` together. Never edit files under `vendo
 
 ## Configuration
 
-`llm-workbench/.env` (gitignored) holds the runtime config for `llama-server`. Copy from `.env.example` and edit:
+Runtime config lives in `~/.config/llm-workbench/` (or `$XDG_CONFIG_HOME/llm-workbench/`):
+
+| Path | What |
+|---|---|
+| `profiles.toml` | Profile registry — one entry per `llama-server` instance you want to run (binary path, model, port, extra args, autostart flag, embedding/chat kind, etc.). Managed through the Servers tab; editing the file by hand also works. |
+| `projects.toml` | Project registry — `{id, name, path}` triples plus the active-project pointer. |
+| `builds.toml` | Build registry — `BuildRecipe` definitions + the `Build` artifacts they produced (paths to compiled `llama-server` binaries). M5. |
+| `modes/` | Global mode overrides (`<id>.toml` + `<id>.system.md`). Seeded from the bundled set on first launch. |
+| `memory.md` | Per-user freeform notes the agent reads/appends across every project. |
+
+`llm-workbench/.env` is a **legacy seed** kept for backward compatibility: on first launch it populates a default profile in `profiles.toml`. Subsequent edits should happen through the Servers tab (or by editing `profiles.toml` directly). Recognised keys:
 
 | Key | Purpose |
 |---|---|
@@ -148,27 +189,47 @@ Commit `go.mod`, `go.sum`, and `vendor/` together. Never edit files under `vendo
 | `LLAMA_HOST` / `LLAMA_PORT` | Host/port the server listens on (default `127.0.0.1:8080`) |
 | `LLAMA_EXTRA_ARGS` | Extra args passed verbatim to `llama-server` (space-separated). Fork-specific flags (e.g. `--fit`) live here. |
 | `LLAMA_HEALTH_TIMEOUT` | Seconds to wait for `/health` to return ok |
-| `LLAMA_AUTOSTART` | `true` to spawn `llama-server` automatically on app launch |
 
-## Architecture (M0)
+(`LLAMA_AUTOSTART` was retired — the per-profile `autostart` flag in `profiles.toml` is the single source of truth.)
 
-Single-package Go program. Three concerns, each in its own file, all bound onto the `App` struct exposed to JS:
+## Architecture
 
-- **`supervisor.go`** — spawns `llama-server` in its own process group, pumps stdout/stderr line-by-line into `llama:log` Wails events, polls `/health`, emits `llama:status`. `Stop()` SIGTERMs the group with 5 s SIGKILL escalation.
-- **`chat.go`** — POSTs to `/v1/chat/completions` with `stream=true`, parses SSE, emits `chat:delta:<streamId>` per token and `chat:done:<streamId>` / `chat:error:<streamId>` terminals. Each stream gets a UUID and a cancel func so the UI can abort via `ChatCancel(streamId)`.
-- **`app.go`** — holds `cfg / supervisor / chat`, exposes `StartServer / StopServer / ServerStatus / ChatStream / ChatCancel / GetConfig`. `OnShutdown` stops the supervisor so the subprocess doesn't outlive the GUI.
+Single-package Go program. Each concern lives in its own file; all services are bound onto the `App` struct exposed to JS via Wails.
 
-The frontend is single-page (`App.tsx`) with an AppShell: header (start/stop + health badge), navbar (prompt textarea + log viewer), main (CodeMirror editor). An `EditorHandle` ref keeps the imperative CM6 API out of React state — token deltas append directly to the editor doc to avoid per-token re-renders.
+Process supervision and chat:
+- **`supervisor.go`** — `ServerRegistry` spawns each profile's `llama-server` in its own process group, pumps stdout/stderr into `llama:log` events, polls `/health`, emits `llama:status`. Stop is SIGTERM with a 5 s SIGKILL escalation.
+- **`chat.go`** — POSTs `/v1/chat/completions` with `stream=true`, parses SSE, emits `chat:delta:<streamId>` per token plus `chat:done` / `chat:error` terminals. Cancellation via `ChatCancel(streamId)`. Sessions with a non-empty mode `tool_whitelist` get routed through the agent loop instead of the plain chat path.
+- **`agent.go` + `agent_loop.go`** — `ToolRegistry` + the two-mode dispatcher (native OpenAI-style function calling first; ReAct text-prompt fallback when the model doesn't support tools natively). Tool calls hit the approval gate (`approval.go`) when the mode policy says so.
+
+Projects, files, modes:
+- **`project.go`** — `ProjectService` (registry + per-project metadata in `~/.config/llm-workbench/projects.toml`).
+- **`file.go`** — `FileService` (sandboxed read/write/listTree/makeDirectory; refuses paths escaping the project root). Hooked to the indexer so every write triggers a background per-file reindex.
+- **`mode.go` + `mode_seed.go`** — `ModeService` merges builtin + global + project-local mode definitions. Bundled `modes/*.toml` + `*.system.md` get seeded into `~/.config/llm-workbench/modes/` on first launch.
+- **`memory.go`** — `MemoryService` reads / appends `memory.md` for each scope. `ModeService.buildTemplateContext` injects the contents into `{{memory.global}}` / `{{memory.project}}` placeholders.
+
+RAG:
+- **`index.go`** — per-project SQLite at `<project>/.llm-workshop/index.db`. Schema: `chunks` (with `source` column for content / history tagging), `chunks_fts` (FTS5 BM25 mirror via triggers), `vec_chunks` (sqlite-vec virtual table, dimension pinned by the active embed profile).
+- **`indexer.go`** — walks the project tree honoring `project.toml` include/exclude globs, chunks each file, and upserts the delta against `chunks`. Also walks `.llm-workshop/sessions/*.jsonl` and indexes transcripts with `source="history"`.
+- **`embedder.go` + `embedclient.go`** — drives the embedding profile (`/v1/embeddings`) to fill `vec_chunks`.
+- **`rag.go`** — hybrid retrieval: dense + sparse pools fused via Reciprocal Rank Fusion; post-filters by `Kinds` so `search_semantic` can scope queries to project content, history, or both.
+
+Build orchestrator + scripting:
+- **`build.go` + `build_orchestrator.go`** — `BuildRecipe` → `Build` pipeline (fetch / configure / compile / register). Builds are referenced by profile.
+- **`scripting.go` + `scripts_store.go`** — goja sandbox exposing `app.tools.run(...)`, `app.llm.chat(...)`, `app.search.semantic(...)`, etc. for Prompt Lab scripts.
+
+Frontend:
+- React 18 + Mantine v7 + CodeMirror 6. Tabs (`Chat`, `Servers`, `Lab`, `Rag`, …) own their state; the chat side uses a CM6 `EditorHandle` ref so token deltas append directly to the doc without per-token React re-renders.
+- `frontend/wailsjs/go/main/App.{js,d.ts}` is regenerated by `wails generate module` whenever an exported `App` method is added or renamed.
 
 ## Roadmap
 
 - **M0 — spike** ✅: Wails shell, `llama-server` supervisor, streaming chat into editor.
 - **M1 — MVP** ✅: multi-profile supervisor, projects, sessions, V5 UI.
-- **M2 — RAG** *(in progress)*: per-project SQLite index with FTS5 + `sqlite-vec`, embeddings, hybrid retrieval.
-- **M3 — agent loop**: tools, modes, sandboxed `ProjectService` for FS ops.
-- **M4 — scripting**.
-- **M5 — build orchestrator**: manage `llama.cpp` builds and model bundles.
-- **M6 — polish**.
+- **M2 — RAG** ✅: per-project SQLite index with FTS5 + `sqlite-vec`, embeddings, hybrid retrieval, session-log RAG (`source="history"`).
+- **M3 — agent loop** ✅: tools (`search_semantic` / `read_file` / `list_files` / `edit_file` / `make_directory` / `read_memory` / `append_memory`), modes with approval policies, sandboxed FS access, memory.md.
+- **M4 — scripting** ✅: Prompt Lab + goja sandbox.
+- **M5 — build orchestrator** ✅: manage `llama.cpp` builds and model bundles.
+- **M6 — polish** *(open)*: reranker (`bge-reranker-v2-m3`), hot-swap, multimodal (`mmproj`), SillyTavern character-card import, Windows/Linux installers.
 
 ## License
 
