@@ -52,6 +52,15 @@ type ChatMessage = {
   toolCalls?: ToolCallChip[];
 };
 
+type ChatStats = {
+  prompt_n?: number;
+  prompt_ms?: number;
+  prompt_per_second?: number;
+  predicted_n?: number;
+  predicted_ms?: number;
+  predicted_per_second?: number;
+};
+
 export type ChatTabProps = {
   activeProfileId: string;
   activeStatus: InstanceStatus;
@@ -97,6 +106,7 @@ export function ChatTab({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [stats, setStats] = useState<ChatStats | null>(null);
   const streamIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -488,6 +498,7 @@ export function ChatTab({
     setMessages((prev) => [...prev, userMsg, asstMsg]);
     setPrompt('');
     setStreaming(true);
+    setStats(null);
 
     try {
       const handle =
@@ -500,6 +511,7 @@ export function ChatTab({
       const deltaEvent = `chat:delta:${id}`;
       const doneEvent = `chat:done:${id}`;
       const errEvent = `chat:error:${id}`;
+      const statsEvent = `chat:stats:${id}`;
       const toolReqEvent = `agent:tool:request:${id}`;
       const toolResEvent = `agent:tool:result:${id}`;
 
@@ -514,6 +526,7 @@ export function ChatTab({
         EventsOff(deltaEvent);
         EventsOff(doneEvent);
         EventsOff(errEvent);
+        EventsOff(statsEvent);
         EventsOff(toolReqEvent);
         EventsOff(toolResEvent);
         streamIdRef.current = null;
@@ -539,6 +552,9 @@ export function ChatTab({
           }
           return out;
         });
+      });
+      EventsOn(statsEvent, (s: ChatStats) => {
+        setStats(s);
       });
       EventsOn(doneEvent, () => cleanup(true));
       EventsOn(errEvent, (msg: string) => {
@@ -730,6 +746,20 @@ export function ChatTab({
             </ModePill>
             {modelLabel && (
               <span style={pillStyle('mono')}>{modelLabel}</span>
+            )}
+            {stats && (stats.predicted_per_second || stats.predicted_n) && (
+              <span
+                style={pillStyle('mono')}
+                title={
+                  `prompt: ${stats.prompt_n ?? 0} tok` +
+                  (stats.prompt_per_second ? ` @ ${stats.prompt_per_second.toFixed(1)} t/s` : '') +
+                  `\npredict: ${stats.predicted_n ?? 0} tok` +
+                  (stats.predicted_per_second ? ` @ ${stats.predicted_per_second.toFixed(1)} t/s` : '')
+                }
+              >
+                {stats.predicted_per_second ? `${stats.predicted_per_second.toFixed(1)} t/s` : ''}
+                {stats.predicted_n ? ` · ${stats.predicted_n} tok` : ''}
+              </span>
             )}
           </div>
         </div>

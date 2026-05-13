@@ -21,6 +21,18 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
+// ChatStats mirrors the `timings` block emitted by llama-server (and the
+// ik_llama.cpp fork). All fields are optional — non-llama backends won't
+// supply them, so the frontend must treat the event as best-effort.
+type ChatStats struct {
+	PromptN            int     `json:"prompt_n"`
+	PromptMS           float64 `json:"prompt_ms"`
+	PromptPerSecond    float64 `json:"prompt_per_second"`
+	PredictedN         int     `json:"predicted_n"`
+	PredictedMS        float64 `json:"predicted_ms"`
+	PredictedPerSecond float64 `json:"predicted_per_second"`
+}
+
 type ChatService struct {
 	registry *ServerRegistry
 	pm       *ProfileManager
@@ -311,8 +323,9 @@ func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, m
 	}()
 
 	body := map[string]any{
-		"messages": messages,
-		"stream":   true,
+		"messages":          messages,
+		"stream":            true,
+		"timings_per_token": true,
 	}
 	if temperature > 0 {
 		body["temperature"] = temperature
@@ -367,9 +380,13 @@ func (c *ChatService) parseSSE(streamID string, body io.Reader) (string, error) 
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
+			Timings *ChatStats `json:"timings"`
 		}
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
+		}
+		if ev.Timings != nil {
+			c.emit("chat:stats:"+streamID, ev.Timings)
 		}
 		for _, ch := range ev.Choices {
 			if ch.Delta.Content != "" {

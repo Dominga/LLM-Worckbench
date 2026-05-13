@@ -117,10 +117,11 @@ func (c *ChatService) streamWithTools(
 	for iter := 0; iter < maxAgentIterations; iter++ {
 		out.Iterations = iter + 1
 		body := map[string]any{
-			"messages":    convo,
-			"stream":      true,
-			"tools":       tools,
-			"tool_choice": "auto",
+			"messages":          convo,
+			"stream":            true,
+			"tools":             tools,
+			"tool_choice":       "auto",
+			"timings_per_token": true,
 		}
 		buf, _ := json.Marshal(body)
 		req, err := http.NewRequestWithContext(ctx, "POST",
@@ -292,8 +293,9 @@ func (c *ChatService) streamWithReAct(
 	for iter := 0; iter < maxAgentIterations; iter++ {
 		out.Iterations = iter + 1
 		body := map[string]any{
-			"messages": convo,
-			"stream":   true,
+			"messages":          convo,
+			"stream":            true,
+			"timings_per_token": true,
 			// Stop sequences keep the model from continuing past Args:
 			// into a hallucinated Observation. Some servers ignore stop
 			// outright, so we also detect Action+Args after the fact.
@@ -591,9 +593,13 @@ func (c *ChatService) parseToolStream(streamID string, body io.Reader) (string, 
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
+			Timings *ChatStats `json:"timings"`
 		}
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
+		}
+		if ev.Timings != nil {
+			c.emit("chat:stats:"+streamID, ev.Timings)
 		}
 		for _, ch := range ev.Choices {
 			if ch.Delta.Content != "" {
