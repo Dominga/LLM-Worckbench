@@ -130,6 +130,10 @@ export function ListBuilds() {
   return window['go']['main']['App']['ListBuilds']();
 }
 
+export function ListFamilies() {
+  return window['go']['main']['App']['ListFamilies']();
+}
+
 export function ListFiles(arg1) {
   return window['go']['main']['App']['ListFiles'](arg1);
 }

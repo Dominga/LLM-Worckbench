@@ -269,6 +269,70 @@ export namespace main {
 	        this.errors = source["errors"];
 	    }
 	}
+	export class SamplingDefaults {
+	    temperature?: number;
+	    topP?: number;
+	    topK?: number;
+	    minP?: number;
+	    repeatPenalty?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SamplingDefaults(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.temperature = source["temperature"];
+	        this.topP = source["topP"];
+	        this.topK = source["topK"];
+	        this.minP = source["minP"];
+	        this.repeatPenalty = source["repeatPenalty"];
+	    }
+	}
+	export class Family {
+	    id: string;
+	    name: string;
+	    description?: string;
+	    chatTemplateHint?: string;
+	    reasoningToken?: string;
+	    samplingDefaults: SamplingDefaults;
+	    notes?: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Family(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.chatTemplateHint = source["chatTemplateHint"];
+	        this.reasoningToken = source["reasoningToken"];
+	        this.samplingDefaults = this.convertValues(source["samplingDefaults"], SamplingDefaults);
+	        this.notes = source["notes"];
+	        this.source = source["source"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class FileContent {
 	    path: string;
 	    bytes: number;
@@ -764,6 +828,7 @@ export namespace main {
 	        this.htmlSize = source["htmlSize"];
 	    }
 	}
+	
 	
 	export class ScriptFile {
 	    name: string;

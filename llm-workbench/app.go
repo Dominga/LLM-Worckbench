@@ -31,6 +31,7 @@ type App struct {
 	tools     *ToolRegistry
 	modes     *ModeService
 	memory    *MemoryService
+	families  *FamilyService
 	approvals *ApprovalManager
 	snapshots *SnapshotService
 	scripting *ScriptingService
@@ -104,6 +105,15 @@ func (a *App) startup(ctx context.Context) {
 	a.memory = NewMemoryService(a.projects)
 	a.modes = NewModeService(a.projects)
 	a.modes.AttachMemory(a.memory)
+	// One-shot: seed bundled model families into the global families
+	// dir before constructing FamilyService so List() picks them up
+	// on the very first launch.
+	if written, err := seedGlobalFamiliesOnce(); err != nil {
+		wruntime.LogWarningf(ctx, "seed global families: %v", err)
+	} else if len(written) > 0 {
+		wruntime.LogInfof(ctx, "seeded %d family files into global families dir", len(written))
+	}
+	a.families = NewFamilyService()
 	// One-shot: copy bundled modes/*.toml + *.system.md into the user's
 	// global modes dir on first launch. Subsequent launches leave the
 	// dir alone so user edits persist.
@@ -299,6 +309,16 @@ func (a *App) SaveMode(scope, projectID, modeID string, def Mode, template strin
 	default:
 		return fmt.Errorf("unknown scope %q (want \"project\" or \"global\")", scope)
 	}
+}
+
+// ListFamilies returns the merged (builtin + global) set of model
+// families, sorted by ID. Used by the ProfileForm autocomplete and
+// the Servers tab grouping (PR2 / TD31b).
+func (a *App) ListFamilies() []Family {
+	if a.families == nil {
+		return nil
+	}
+	return a.families.List()
 }
 
 // ReadMemory returns the contents of the requested memory.md. `scope`

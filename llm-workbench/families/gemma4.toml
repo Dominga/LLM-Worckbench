@@ -1,0 +1,17 @@
+id = "gemma4"
+name = "Gemma 4"
+description = "Google Gemma 4 instruct models. Carries forward the gemma3 chat-template conventions; refine when stable releases land."
+
+chat_template_hint = "gemma"
+
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+
+notes = """
+Placeholder entry — slot kept ready for Gemma 4 builds as they reach
+GGUF distribution. If the chat template or sampling guidance changes
+in the upstream release, edit this file (it lives at
+~/.config/llm-workbench/families/gemma4.toml after first launch).
+"""

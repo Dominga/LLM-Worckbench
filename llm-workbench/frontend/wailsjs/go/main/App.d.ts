@@ -66,6 +66,8 @@ export function ListBuildRecipes():Promise<Array<main.BuildRecipe>>;
 
 export function ListBuilds():Promise<Array<main.Build>>;
 
+export function ListFamilies():Promise<Array<main.Family>>;
+
 export function ListFiles(arg1:string):Promise<Array<main.FileNode>>;
 
 export function ListModes(arg1:string):Promise<Array<main.Mode>>;

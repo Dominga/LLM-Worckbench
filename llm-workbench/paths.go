@@ -90,3 +90,16 @@ func globalMemoryPath() string {
 func projectMemoryPath(projectRoot string) string {
 	return filepath.Join(projectRoot, ProjectDirName, "memory.md")
 }
+
+// globalFamiliesDir is `~/.config/llm-workbench/families/`. Per-user
+// model-family metadata files (`<id>.toml`) live here. Seeded from
+// the bundled set on first launch; user edits + community-installed
+// families (TD33) live alongside. Missing returns "" so callers can
+// treat it as "builtin only".
+func globalFamiliesDir() string {
+	d, err := configDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "families")
+}

@@ -1,0 +1,22 @@
+id = "mistral"
+name = "Mistral"
+description = "Mistral and Mixtral instruct models (Mistral 7B Instruct, Mixtral 8x7B/8x22B, Mistral Nemo, Mistral Large). [INST]...[/INST] chat format."
+
+chat_template_hint = "mistral-instruct"
+
+[sampling_defaults]
+temperature = 0.7
+top_p = 1.0
+
+notes = """
+Classic Mistral instruct format wraps user turns in [INST]...[/INST] and
+assistant turns in plain text. Newer Mistral-Nemo and Large checkpoints
+ship their own template — llama-server reads the right one from GGUF
+metadata in either case.
+
+Most Mistral checkpoints lack native function-calling support; the
+agent loop will fall back to ReAct prompting. Mixtral and Nemo are
+better at structured output than the older 7B base.
+
+No reasoning-token convention.
+"""

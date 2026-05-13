@@ -1,0 +1,23 @@
+id = "gemma3"
+name = "Gemma 3"
+description = "Google Gemma 3 instruct models. Uses the <start_of_turn>/<end_of_turn> chat template. No built-in reasoning tokens."
+
+chat_template_hint = "gemma"
+
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+
+notes = """
+Gemma uses the Google chat template (<start_of_turn>user ... <end_of_turn>
+<start_of_turn>model ...). llama-server picks this up automatically from
+the GGUF metadata on recent builds.
+
+Gemma instruct models tend to behave better at higher temperatures than
+Qwen — the official recommendation is temperature=1.0, top_k=64. Lower
+values produce noticeably flatter prose.
+
+No reasoning-token convention; tool calling support is build-dependent
+(some community fine-tunes add it, base instruct usually does not).
+"""

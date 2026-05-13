@@ -1,0 +1,21 @@
+id = "llama3"
+name = "Llama 3.x"
+description = "Meta Llama 3 / 3.1 / 3.2 / 3.3 instruct models. Uses the Llama-3 chat template (<|begin_of_text|>, <|start_header_id|>, ...)."
+
+chat_template_hint = "llama-3"
+
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.9
+
+notes = """
+Llama 3 instruct uses Meta's chat template with explicit header tokens
+(<|start_header_id|>system<|end_header_id|>, etc.). llama-server picks
+this up from GGUF metadata on recent builds.
+
+Native tool-call support landed in Llama 3.1 — earlier 3.0 checkpoints
+typically need the ReAct fallback. Recommend temperature 0.6 for
+factual work; raise for creative writing.
+
+No standard reasoning-token convention.
+"""

@@ -1,0 +1,21 @@
+id = "deepseek-r1"
+name = "DeepSeek R1"
+description = "DeepSeek R1 reasoning models (R1, R1-Distill-*). Emit explicit <think>...</think> reasoning blocks before the answer."
+
+chat_template_hint = "deepseek-r1"
+reasoning_token = "<think>"
+
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+
+notes = """
+R1 always emits a long <think>...</think> trace before its final answer.
+The chat UI's ThinkingBlock splitter is designed around this — leaving
+the reasoning_token as <think> lets the UI auto-collapse it.
+
+DeepSeek recommends temperature in the 0.5-0.7 range. Going lower flattens
+the reasoning; going higher tends to derail it.
+
+R1-Distill variants inherit the same template and reasoning convention.
+"""

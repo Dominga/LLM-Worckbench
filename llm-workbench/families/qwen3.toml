@@ -1,0 +1,24 @@
+id = "qwen3"
+name = "Qwen 3.x"
+description = "Alibaba Qwen 3 chat models (Instruct / Coder / Math variants). ChatML-formatted prompts, native tool-call support, optional <think> reasoning blocks."
+
+chat_template_hint = "chatml"
+reasoning_token = "<think>"
+
+[sampling_defaults]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+repeat_penalty = 1.05
+
+notes = """
+Qwen3 uses the ChatML format (<|im_start|>role / <|im_end|>) and supports
+native OpenAI-style tool calling when llama-server is started with --jinja.
+
+Some Qwen3 builds emit <think>...</think> reasoning before the answer; the
+chat UI splits these into a collapsible block. If your specific build does
+not, the field is harmless — the splitter just never triggers.
+
+The sampling defaults above are conservative starting points; bump
+temperature for creative writing, drop top_k for more focused completions.
+"""
