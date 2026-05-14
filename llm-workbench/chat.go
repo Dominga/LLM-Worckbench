@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,20 @@ type ChatStats struct {
 	PredictedN         int     `json:"predicted_n"`
 	PredictedMS        float64 `json:"predicted_ms"`
 	PredictedPerSecond float64 `json:"predicted_per_second"`
+}
+
+// reliableTimings filters out per-token timing samples that produce wildly
+// inflated t/s. llama-server with timings_per_token=true emits cumulative
+// timings on every chunk; at predicted_n=1 predicted_ms can round to ~0,
+// yielding values like 1e6 t/s. Wait until enough tokens have accumulated.
+func reliableTimings(s *ChatStats) bool {
+	if s == nil {
+		return false
+	}
+	if s.PredictedN >= 4 && s.PredictedMS >= 50 {
+		return true
+	}
+	return false
 }
 
 type ChatService struct {
@@ -124,6 +139,11 @@ func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temp
 
 	go func() {
 		full, err := c.runStream(streamCtx, streamID, baseURL, messages, temperature)
+		// User-initiated cancel = clean stop. Keep partial content,
+		// drop the canceled error so frontend gets chat:done not chat:error.
+		if err != nil && errors.Is(err, context.Canceled) {
+			err = nil
+		}
 		c.finalize(streamID, full, err)
 	}()
 	return StreamHandle{StreamID: streamID}, nil
@@ -260,6 +280,12 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 		} else {
 			fullContent, err = c.runStream(streamCtx, streamID, baseURL, msgs, temperature)
 		}
+		// User-initiated cancel = clean stop. Persist whatever the
+		// model produced so far, and emit chat:done (not chat:error)
+		// so the frontend keeps the partial bubble visible.
+		if err != nil && errors.Is(err, context.Canceled) {
+			err = nil
+		}
 		if err == nil && fullContent != "" {
 			msg := SessionMessage{
 				Role:      "assistant",
@@ -385,7 +411,7 @@ func (c *ChatService) parseSSE(streamID string, body io.Reader) (string, error) 
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
 		}
-		if ev.Timings != nil {
+		if ev.Timings != nil && reliableTimings(ev.Timings) {
 			c.emit("chat:stats:"+streamID, ev.Timings)
 		}
 		for _, ch := range ev.Choices {

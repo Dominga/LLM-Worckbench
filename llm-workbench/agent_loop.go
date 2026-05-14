@@ -144,12 +144,13 @@ func (c *ChatService) streamWithTools(
 
 		content, calls, finish, err := c.parseToolStream(streamID, resp.Body)
 		resp.Body.Close()
-		if err != nil {
-			return out, err
-		}
-
+		// Append partial content BEFORE error short-circuit so a mid-stream
+		// cancel still carries the tokens the user already saw.
 		if content != "" {
 			out.FinalContent += content
+		}
+		if err != nil {
+			return out, err
 		}
 
 		// No tool call → model produced a final answer. Done.
@@ -321,10 +322,12 @@ func (c *ChatService) streamWithReAct(
 		// Reuse the plain SSE drain — ReAct runs without tools[].
 		full, sErr := c.parseSSE(streamID, resp.Body)
 		resp.Body.Close()
+		// Append partial content BEFORE error short-circuit so a mid-stream
+		// cancel still carries the tokens the user already saw.
+		out.FinalContent += full
 		if sErr != nil {
 			return out, sErr
 		}
-		out.FinalContent += full
 
 		// Final Answer line wins.
 		if m := reactFinalRe.FindStringSubmatch(full); m != nil {
@@ -598,7 +601,7 @@ func (c *ChatService) parseToolStream(streamID string, body io.Reader) (string, 
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
 		}
-		if ev.Timings != nil {
+		if ev.Timings != nil && reliableTimings(ev.Timings) {
 			c.emit("chat:stats:"+streamID, ev.Timings)
 		}
 		for _, ch := range ev.Choices {

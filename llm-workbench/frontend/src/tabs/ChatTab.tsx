@@ -6,6 +6,7 @@ import {
   IconFile,
   IconLayoutSidebarLeftCollapse,
   IconSend,
+  IconPlayerStop,
   IconSparkles,
   IconX,
 } from '@tabler/icons-react';
@@ -1057,9 +1058,9 @@ export function ChatTab({
                     justifyContent: 'center',
                     cursor: 'pointer',
                   }}
-                  title="Cancel"
+                  title="Stop"
                 >
-                  <IconX size={12} />
+                  <IconPlayerStop size={12} />
                 </button>
               ) : (
                 <button
