@@ -217,6 +217,20 @@ func (c *ChatService) streamWithTools(
 			}
 			if runErr != nil {
 				toolMsg["content"] = fmt.Sprintf("error: %v", runErr)
+			} else if img, ok := result.(*ImageToolResult); ok {
+				// Vision-aware tool result: text summary keeps the
+				// JSON-shaped breadcrumb the model expects, plus an
+				// image_url part carrying the actual pixels. Older
+				// llama.cpp builds without mtmd will just ignore the
+				// image_url part and see the text — degraded but not
+				// broken. The dataURL is never persisted (ToolCallRecord
+				// stores rec.Result via json.Marshal, which skips
+				// ImageToolResult.DataURL via its `json:"-"` tag).
+				summary := fmt.Sprintf(`{"path":%q,"mime":%q,"bytes":%d,"kind":"image"}`, img.Path, img.Mime, img.Bytes)
+				toolMsg["content"] = []map[string]any{
+					{"type": "text", "text": summary},
+					{"type": "image_url", "image_url": map[string]any{"url": img.DataURL}},
+				}
 			} else {
 				resultJSON, mErr := json.Marshal(result)
 				if mErr != nil {
@@ -409,14 +423,30 @@ func (c *ChatService) streamWithReAct(
 		// add the Observation as a `user` turn — most non-OpenAI
 		// servers don't support a `tool` role in plain chat templates.
 		convo = append(convo, map[string]any{"role": "assistant", "content": full})
-		var obs string
 		if runErr != nil {
-			obs = fmt.Sprintf("Observation: error: %v", runErr)
+			convo = append(convo, map[string]any{
+				"role":    "user",
+				"content": fmt.Sprintf("Observation: error: %v", runErr),
+			})
+		} else if img, ok := result.(*ImageToolResult); ok {
+			// ReAct Observations are normally a text string. To carry an
+			// image we have to switch this single turn to the multimodal
+			// array form — same dataURL injection as the native tool path.
+			summary := fmt.Sprintf(`{"path":%q,"mime":%q,"bytes":%d,"kind":"image"}`, img.Path, img.Mime, img.Bytes)
+			convo = append(convo, map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": "Observation: " + summary},
+					{"type": "image_url", "image_url": map[string]any{"url": img.DataURL}},
+				},
+			})
 		} else {
 			resJSON, _ := json.Marshal(result)
-			obs = "Observation: " + string(resJSON)
+			convo = append(convo, map[string]any{
+				"role":    "user",
+				"content": "Observation: " + string(resJSON),
+			})
 		}
-		convo = append(convo, map[string]any{"role": "user", "content": obs})
 	}
 	return out, fmt.Errorf("react loop hit %d-iteration cap without Final Answer", maxAgentIterations)
 }

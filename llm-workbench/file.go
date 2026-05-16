@@ -193,6 +193,34 @@ func (fsrv *FileService) ReadFile(projectID, relPath string) (FileContent, error
 	}, nil
 }
 
+// ReadFileBytes returns the file's raw bytes (unlike ReadFile which
+// stringifies and is meant for text only). `cap` bounds how much is
+// read; oversize files yield (nil, sizeOnDisk, fs.ErrInvalid)-like
+// behavior so the caller can refuse instead of silently truncating
+// a binary blob. Used by readFileTool for image attachments where a
+// chopped file would be worse than no file.
+func (fsrv *FileService) ReadFileBytes(projectID, relPath string, cap int64) ([]byte, int64, error) {
+	abs, _, err := fsrv.resolveSafe(projectID, relPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("stat: %w", err)
+	}
+	if st.IsDir() {
+		return nil, 0, fmt.Errorf("%s is a directory", relPath)
+	}
+	if cap > 0 && st.Size() > cap {
+		return nil, st.Size(), fmt.Errorf("file %s is %d bytes, exceeds %d-byte cap", relPath, st.Size(), cap)
+	}
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, st.Size(), fmt.Errorf("read: %w", err)
+	}
+	return b, st.Size(), nil
+}
+
 // WriteFile replaces the file's content (or creates it) atomically via
 // temp + rename. Used by the editor in PR6. Refuses to write outside the
 // project root or into the state directory.

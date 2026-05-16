@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -53,6 +56,12 @@ type AgentContext struct {
 	// that haven't been tagged yet.
 	FamilyID      string
 	FamilyVersion string
+
+	// ProfileSupportsVision lets vision-aware tools (notably read_file
+	// on image paths) decide whether to refuse or to attach the bytes
+	// as an image_url part. Resolved from the live /props caps at
+	// chat.go boundary; tools can't probe it themselves.
+	ProfileSupportsVision bool
 }
 
 // ToolRegistry holds the set of tools available to the agent. Lookups
@@ -251,12 +260,25 @@ func flattenTree(nodes []FileNode) []map[string]any {
 	return out
 }
 
-// readFileTool wraps FileService.ReadFile.
+// ImageToolResult is a sentinel returned by tools that resolve to an
+// image rather than text (e.g. read_file on a .png path). The agent
+// loop type-asserts on this to rewrite the tool message's `content`
+// into the OpenAI multimodal array form so the vision-capable model
+// receives the actual pixels, not just a stringified JSON of the path.
+type ImageToolResult struct {
+	Path    string `json:"path"`
+	Mime    string `json:"mime"`
+	Bytes   int64  `json:"bytes"`
+	DataURL string `json:"-"` // never serialized; agent loop wraps it as image_url instead
+}
+
+// readFileTool wraps FileService.ReadFile, with an image-aware branch
+// for vision-capable profiles.
 type readFileTool struct{}
 
 func (readFileTool) Name() string { return "read_file" }
 func (readFileTool) Description() string {
-	return "Read a project file by relative path. Returns the full text content (truncated at 5 MB)."
+	return "Read a project file by relative path. Returns the full text content for text files (truncated at 5 MB). When the file is an image and the active profile supports vision input, the image is attached to the result so the model can see it directly."
 }
 func (readFileTool) InputSchema() map[string]any {
 	return map[string]any{
@@ -265,7 +287,7 @@ func (readFileTool) InputSchema() map[string]any {
 		"properties": map[string]any{
 			"path": map[string]any{
 				"type":        "string",
-				"description": "Project-relative path, e.g. src/main.go.",
+				"description": "Project-relative path, e.g. src/main.go or assets/diagram.png.",
 			},
 		},
 	}
@@ -278,6 +300,29 @@ func (readFileTool) Execute(ctx context.Context, ac *AgentContext, args map[stri
 	if path == "" {
 		return nil, errors.New("path is required")
 	}
+	if isBinaryExt(path) {
+		// The only binary kind that's useful as a tool result is an
+		// image fed to a vision model; everything else (archives,
+		// audio, weights) would just blow up the context as base64.
+		if !isImageExt(path) {
+			return nil, fmt.Errorf("read_file refuses binary file %s — only text and image files are supported", path)
+		}
+		if !ac.ProfileSupportsVision {
+			return nil, fmt.Errorf("read_file: %s is an image but the active profile does not support vision input", path)
+		}
+		const imgCap int64 = 10 * 1024 * 1024 // 10 MB — well above what the encoders actually accept
+		raw, size, err := ac.Files.ReadFileBytes(ac.ProjectID, path, imgCap)
+		if err != nil {
+			return nil, err
+		}
+		mt := mimeFromExt(path)
+		return &ImageToolResult{
+			Path:    path,
+			Mime:    mt,
+			Bytes:   size,
+			DataURL: "data:" + mt + ";base64," + base64.StdEncoding.EncodeToString(raw),
+		}, nil
+	}
 	fc, err := ac.Files.ReadFile(ac.ProjectID, path)
 	if err != nil {
 		return nil, err
@@ -288,6 +333,34 @@ func (readFileTool) Execute(ctx context.Context, ac *AgentContext, args map[stri
 		"truncated": fc.Truncated,
 		"content":   fc.Content,
 	}, nil
+}
+
+// isImageExt is a subset of binaryExts — extensions for which a vision
+// model can ingest the raw bytes. Kept narrow on purpose: SVG is text
+// but llama.cpp vision encoders don't read it as an image, so it stays
+// out.
+func isImageExt(rel string) bool {
+	switch strings.ToLower(filepath.Ext(rel)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return true
+	}
+	return false
+}
+
+func mimeFromExt(rel string) string {
+	switch strings.ToLower(filepath.Ext(rel)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	}
+	return "application/octet-stream"
 }
 
 // editFileTool wraps FileService.WriteFile. The approval gate is
