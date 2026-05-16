@@ -653,6 +653,7 @@ export default function App() {
         onTabChange={setTab}
         activeStatus={activeStatus}
         activeMetrics={activeMetrics}
+        sysMetrics={sysMetrics}
         projects={projects}
         activeProject={activeProject}
         onOpenProject={onOpenProject}

@@ -23,7 +23,7 @@ import {
   Quit,
 } from '../../wailsjs/runtime/runtime';
 import { V5 } from '../theme';
-import { Tab, InstanceStatus, InstanceMetrics, Project } from './types';
+import { Tab, InstanceStatus, InstanceMetrics, Project, SysMetricsPayload } from './types';
 
 type TabDef = {
   id: Tab;
@@ -45,6 +45,7 @@ export type TitleBarProps = {
   onTabChange: (t: Tab) => void;
   activeStatus: InstanceStatus;
   activeMetrics: InstanceMetrics;
+  sysMetrics: SysMetricsPayload | null;
   projects: Project[];
   activeProject: Project | null;
   onOpenProject: () => void;
@@ -59,6 +60,7 @@ export function TitleBar({
   onTabChange,
   activeStatus,
   activeMetrics,
+  sysMetrics,
   projects,
   activeProject,
   onOpenProject,
@@ -67,14 +69,7 @@ export function TitleBar({
   onDeleteProject,
   onOpenSettings,
 }: TitleBarProps) {
-  const dotColor =
-    activeStatus.state === 'running'
-      ? V5.ok
-      : activeStatus.state === 'starting'
-        ? V5.warn
-        : activeStatus.state === 'crashed'
-          ? V5.danger
-          : V5.textDim;
+  void activeStatus; // status dot moved out of the bar; prop kept for future reuse
 
   return (
     <div style={titleBarStyle}>
@@ -123,9 +118,7 @@ export function TitleBar({
 
       {/* Status indicators */}
       <div style={statusStripStyle}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <Dot color={dotColor} /> chat
-        </span>
+        <SysStats sysMetrics={sysMetrics} />
         {activeMetrics.lastTps > 0 && (
           <>
             <span style={{ color: V5.textDim }}>│</span>
@@ -332,6 +325,53 @@ const projectChipStyle: CSSProperties = {
   fontSize: 12,
   cursor: 'pointer',
 };
+
+// SysStats renders compact VRAM + RAM usage pills in the titlebar.
+// Tinted red when usage crosses 90% so the user notices before allocs
+// start failing. Hidden when the sys-metrics poll hasn't reported yet
+// (first second of app startup).
+function SysStats({ sysMetrics }: { sysMetrics: SysMetricsPayload | null }) {
+  if (!sysMetrics) return null;
+  const items: { label: string; used: number; total: number; title: string }[] = [];
+  if (sysMetrics.gpu?.available && sysMetrics.gpu.totalMb > 0) {
+    items.push({
+      label: 'VRAM',
+      used: sysMetrics.gpu.usedMb,
+      total: sysMetrics.gpu.totalMb,
+      title: sysMetrics.gpu.gpus?.[0]?.name
+        ? `${sysMetrics.gpu.gpus[0].name} — ${sysMetrics.gpu.usedMb} / ${sysMetrics.gpu.totalMb} MiB`
+        : `${sysMetrics.gpu.usedMb} / ${sysMetrics.gpu.totalMb} MiB`,
+    });
+  }
+  if (sysMetrics.ram?.available && sysMetrics.ram.totalBytes > 0) {
+    const usedMb = Math.round(sysMetrics.ram.usedBytes / (1024 * 1024));
+    const totalMb = Math.round(sysMetrics.ram.totalBytes / (1024 * 1024));
+    items.push({
+      label: 'RAM',
+      used: usedMb,
+      total: totalMb,
+      title: `${usedMb} / ${totalMb} MiB`,
+    });
+  }
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((it, i) => {
+        const frac = it.used / it.total;
+        const color = frac >= 0.9 ? V5.danger : frac >= 0.75 ? V5.warn : V5.text;
+        const gb = (mb: number) => (mb / 1024).toFixed(1);
+        return (
+          <span key={it.label} title={it.title} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {i > 0 && <span style={{ color: V5.textDim }}>│</span>}
+            <span style={{ color: V5.textDim }}>{it.label}</span>
+            <span style={{ color }}>{gb(it.used)}</span>
+            <span style={{ color: V5.textDim }}>/ {gb(it.total)} GiB</span>
+          </span>
+        );
+      })}
+    </>
+  );
+}
 
 function Dot({ color, size = 6 }: { color: string; size?: number }) {
   return (
