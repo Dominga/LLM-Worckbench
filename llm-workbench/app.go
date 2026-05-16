@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -34,10 +35,11 @@ type App struct {
 	families  *FamilyService
 	registry2 *RegistryService // TD33 external registry (sources / install / browse)
 	settings  *SettingsService
-	approvals *ApprovalManager
-	snapshots *SnapshotService
-	scripting *ScriptingService
-	scripts   *ScriptStore
+	approvals   *ApprovalManager
+	snapshots   *SnapshotService
+	scripting   *ScriptingService
+	scripts     *ScriptStore
+	attachments *AttachmentService
 }
 
 func NewApp() *App {
@@ -149,7 +151,8 @@ func (a *App) startup(ctx context.Context) {
 	a.approvals = NewApprovalManager()
 	a.snapshots = NewSnapshotService(a.projects)
 
-	a.chat = NewChatService(a.registry, pm, a.sessions)
+	a.attachments = NewAttachmentService(a.projects)
+	a.chat = NewChatService(a.registry, pm, a.sessions, a.attachments)
 	a.chat.Attach(ctx)
 	a.renderer = NewRenderer()
 	a.scripting = NewScriptingService(a.projects, a.files, a.chat, a.rag, a.profiles, a.indexes)
@@ -899,12 +902,30 @@ func (a *App) ChatStream(profileID string, messages []ChatMessage, temperature f
 
 // SessionChatStream is the session-bound entry point. The user message is
 // appended to the JSONL, and the assistant response is persisted on
-// completion.
-func (a *App) SessionChatStream(projectID, sessionID, userText string, temperature float64, debug bool) (StreamHandle, error) {
+// completion. `attachments` are refs previously returned by
+// SaveSessionAttachment; they ride along with the user turn for
+// multimodal profiles and are rejected up-front otherwise.
+func (a *App) SessionChatStream(projectID, sessionID, userText string, temperature float64, debug bool, attachments []AttachmentRef) (StreamHandle, error) {
 	if a.chat == nil {
 		return StreamHandle{}, fmt.Errorf("chat service not initialized")
 	}
-	return a.chat.StartSessionStream(projectID, sessionID, userText, temperature, debug)
+	return a.chat.StartSessionStream(projectID, sessionID, userText, temperature, debug, attachments)
+}
+
+// SaveSessionAttachment persists an uploaded file under the session's
+// attachments dir and returns a ref the frontend can pass back to
+// SessionChatStream. `dataB64` is the raw file content base64-encoded
+// (Wails JSON can't carry binary). Image MIME types are the only
+// supported kind in Phase B.
+func (a *App) SaveSessionAttachment(projectID, sessionID, name, mimeType, dataB64 string) (AttachmentRef, error) {
+	if a.attachments == nil {
+		return AttachmentRef{}, fmt.Errorf("attachment service not initialized")
+	}
+	data, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		return AttachmentRef{}, fmt.Errorf("decode base64: %w", err)
+	}
+	return a.attachments.Save(projectID, sessionID, name, mimeType, data)
 }
 
 func (a *App) ChatCancel(streamID string) {

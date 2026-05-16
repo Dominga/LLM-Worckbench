@@ -5,6 +5,7 @@ import {
   IconChevronRight,
   IconFile,
   IconLayoutSidebarLeftCollapse,
+  IconPaperclip,
   IconSend,
   IconPlayerStop,
   IconSparkles,
@@ -30,6 +31,7 @@ import {
   SessionChatStream,
   ChatStream,
   ChatCancel,
+  SaveSessionAttachment,
   WriteProjectFile,
   SearchProject,
   ListModes,
@@ -53,6 +55,7 @@ type ChatMessage = {
   content: string;
   toolCalls?: ToolCallChip[];
   debug?: DebugEntry[];
+  attachments?: main.AttachmentRef[];
 };
 
 // TD27: one per agent-loop iteration. Captures the exact body shipped
@@ -123,8 +126,21 @@ export function ChatTab({
   // When on, backend emits chat:debug:* events with the raw payloads we
   // ship into a per-message DebugPanel.
   const [debug, setDebug] = useState(false);
+  // Pending image attachments — uploaded to the session attachments dir
+  // on pick (or paste/drop), then shipped as refs when the user hits
+  // Send. Preview URL is data: kept locally so the chip thumbnail
+  // doesn't have to re-read the file from disk.
+  const [pendingAttachments, setPendingAttachments] = useState<
+    Array<{ ref: main.AttachmentRef; previewURL: string }>
+  >([]);
   const streamIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Vision support is reported by the supervisor after llama-server's
+  // /props probe (or its mmproj fallback). Stopped server → no caps yet
+  // → no paperclip; once the server comes up the button appears.
+  const visionSupported = !!statusByProfile[activeProfileId]?.caps?.vision;
 
   // Ref-mirror of onAfterChat so the chat:done handler always invokes
   // the *latest* refreshActiveSession — the prop captured at send-time
@@ -155,6 +171,12 @@ export function ChatTab({
     const pid = activeProject?.ID;
     const projectChanged = prevProjectIdRef.current !== pid;
     prevProjectIdRef.current = pid;
+    // Pending attachments are scoped to whatever session existed when
+    // the user picked them — switching sessions makes them stale (their
+    // saved blobs live under the previous session's attachments dir).
+    if (projectChanged || prevSessionIdRef.current !== sid) {
+      setPendingAttachments([]);
+    }
     if (!sid) {
       // Project-unbound / pre-session chat: the transcript lives only in
       // local state (TD22). Clear it when we just left a session or switched
@@ -198,11 +220,13 @@ export function ChatTab({
             /* swallow — chip section just won't render for this msg */
           }
         }
+        const attachments = ((m as any).attachments as main.AttachmentRef[] | undefined) ?? undefined;
         return {
           id: `s-${i}`,
           role: (m.role as ChatRole) || 'assistant',
           content: m.content,
           toolCalls,
+          attachments,
         };
       });
 
@@ -495,8 +519,55 @@ export function ChatTab({
     setView(next);
   };
 
+  // Reads a File as a base64 string (no data: prefix). FileReader's
+  // result is a data URL, which we split on "," to keep just the
+  // payload — that's what the backend expects.
+  const fileToBase64 = (f: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const out = String(r.result || '');
+        const comma = out.indexOf(',');
+        resolve(comma >= 0 ? out.slice(comma + 1) : out);
+      };
+      r.onerror = () => reject(r.error || new Error('file read failed'));
+      r.readAsDataURL(f);
+    });
+
+  // Uploads each image to the session attachments dir and pushes a
+  // pending chip with a local data: preview. Auto-creates a session if
+  // needed so the attachment has a place to live (matches send()).
+  const attachFiles = async (files: FileList | File[]) => {
+    const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (arr.length === 0) return;
+    if (!activeProject) {
+      notifications.show({ color: 'yellow', title: 'No project', message: 'Attachments require an active project.' });
+      return;
+    }
+    let sess = activeSession;
+    if (!sess) {
+      sess = await ensureSession(modeId);
+      if (!sess) return;
+    }
+    for (const f of arr) {
+      try {
+        const b64 = await fileToBase64(f);
+        const ref = await SaveSessionAttachment(activeProject.ID, sess.id, f.name, f.type, b64);
+        const previewURL = `data:${f.type};base64,${b64}`;
+        setPendingAttachments((prev) => [...prev, { ref, previewURL }]);
+      } catch (e: any) {
+        notifications.show({ color: 'red', title: 'Attach failed', message: String(e?.message ?? e) });
+      }
+    }
+  };
+
+  const removeAttachment = (path: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.ref.path !== path));
+  };
+
   const send = async () => {
-    if (!prompt.trim() || streaming) return;
+    if (streaming) return;
+    if (!prompt.trim() && pendingAttachments.length === 0) return;
     const userText = prompt.trim();
 
     // /search is intercepted client-side: query the project's RAG index
@@ -526,7 +597,12 @@ export function ChatTab({
       sessionForSend = await ensureSession(modeId);
     }
 
-    const userMsg: ChatMessage = { id: rid(), role: 'user', content: userText };
+    const userMsg: ChatMessage = {
+      id: rid(),
+      role: 'user',
+      content: userText,
+      attachments: pendingAttachments.length > 0 ? pendingAttachments.map((a) => a.ref) : undefined,
+    };
     const asstMsg: ChatMessage = { id: rid(), role: 'assistant', content: '' };
     setMessages((prev) => [...prev, userMsg, asstMsg]);
     setPrompt('');
@@ -534,10 +610,12 @@ export function ChatTab({
     setStats(null);
 
     try {
+      const attachmentRefs = pendingAttachments.map((a) => a.ref);
       const handle =
         activeProject && sessionForSend
-          ? await SessionChatStream(activeProject.ID, sessionForSend.id, userText, 0.7, debug)
-          : await ChatStream(activeProfileId, [{ role: 'user', content: userText }], 0.7, debug);
+          ? await SessionChatStream(activeProject.ID, sessionForSend.id, userText, 0.7, debug, attachmentRefs)
+          : await ChatStream(activeProfileId, [new main.ChatMessage({ role: 'user', content: userText })], 0.7, debug);
+      setPendingAttachments([]);
       const id = handle.streamId;
       streamIdRef.current = id;
 
@@ -1049,6 +1127,17 @@ export function ChatTab({
         {/* Input */}
         <div style={{ padding: '12px 22px 14px', flex: 'none' }}>
           <div
+            onDragOver={(e) => {
+              if (!visionSupported) return;
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              if (!visionSupported) return;
+              e.preventDefault();
+              if (e.dataTransfer?.files?.length) {
+                void attachFiles(e.dataTransfer.files);
+              }
+            }}
             style={{
               background: V5.surface,
               border: `1px solid ${V5.border}`,
@@ -1056,6 +1145,72 @@ export function ChatTab({
               padding: 10,
             }}
           >
+            {pendingAttachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                {pendingAttachments.map((a) => (
+                  <div
+                    key={a.ref.path}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: 3,
+                      paddingRight: 6,
+                      background: V5.surface2,
+                      border: `1px solid ${V5.borderSoft}`,
+                      borderRadius: 6,
+                      fontSize: 11,
+                      color: V5.textMuted,
+                      fontFamily: 'ui-monospace, monospace',
+                    }}
+                    title={a.ref.name || a.ref.path}
+                  >
+                    <img
+                      src={a.previewURL}
+                      alt={a.ref.name || ''}
+                      style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4, display: 'block' }}
+                    />
+                    <span
+                      style={{
+                        maxWidth: 140,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {a.ref.name || a.ref.path.split('/').pop()}
+                    </span>
+                    <button
+                      onClick={() => removeAttachment(a.ref.path)}
+                      title="Remove"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: V5.textMuted,
+                        display: 'inline-flex',
+                        padding: 0,
+                      }}
+                    >
+                      <IconX size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                if (e.currentTarget.files) {
+                  void attachFiles(e.currentTarget.files);
+                }
+                e.currentTarget.value = '';
+              }}
+            />
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.currentTarget.value)}
@@ -1065,8 +1220,28 @@ export function ChatTab({
                   send();
                 }
               }}
+              onPaste={(e) => {
+                if (!visionSupported) return;
+                const items = e.clipboardData?.items;
+                if (!items) return;
+                const files: File[] = [];
+                for (const it of items) {
+                  if (it.kind === 'file') {
+                    const f = it.getAsFile();
+                    if (f && f.type.startsWith('image/')) files.push(f);
+                  }
+                }
+                if (files.length) {
+                  e.preventDefault();
+                  void attachFiles(files);
+                }
+              }}
               disabled={streaming}
-              placeholder="Continue, /search to query the index, or @-mention a file…"
+              placeholder={
+                visionSupported
+                  ? 'Continue, paste/drop an image, /search to query the index, or @-mention a file…'
+                  : 'Continue, /search to query the index, or @-mention a file…'
+              }
               rows={2}
               style={{
                 width: '100%',
@@ -1118,6 +1293,28 @@ export function ChatTab({
                 {mode.name} <IconChevronDown size={9} />
               </button>
               <div style={{ flex: 1 }} />
+              {visionSupported && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={streaming}
+                  title="Attach image (drop / paste also work)"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    background: 'transparent',
+                    color: V5.textMuted,
+                    border: `1px solid ${V5.borderSoft}`,
+                    borderRadius: 7,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: streaming ? 'not-allowed' : 'pointer',
+                    opacity: streaming ? 0.5 : 1,
+                  }}
+                >
+                  <IconPaperclip size={12} />
+                </button>
+              )}
               <span style={{ fontSize: 10.5 }}>⌘ ⏎</span>
               {streaming ? (
                 <button
@@ -1141,19 +1338,21 @@ export function ChatTab({
               ) : (
                 <button
                   onClick={send}
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() && pendingAttachments.length === 0}
                   style={{
                     width: 28,
                     height: 28,
-                    background: !prompt.trim() ? V5.surface2 : V5.accent,
+                    background:
+                      !prompt.trim() && pendingAttachments.length === 0 ? V5.surface2 : V5.accent,
                     color: '#fff',
                     border: 'none',
                     borderRadius: 7,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: !prompt.trim() ? 'not-allowed' : 'pointer',
-                    opacity: !prompt.trim() ? 0.5 : 1,
+                    cursor:
+                      !prompt.trim() && pendingAttachments.length === 0 ? 'not-allowed' : 'pointer',
+                    opacity: !prompt.trim() && pendingAttachments.length === 0 ? 0.5 : 1,
                   }}
                   title={
                     healthy
@@ -1534,7 +1733,43 @@ function UserBubble({ m }: { m: ChatMessage }) {
         border: `1px solid ${V5.borderSoft}`,
       }}
     >
-      <div style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+      {m.attachments && m.attachments.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.content ? 8 : 0 }}>
+          {m.attachments.map((a) => (
+            <div
+              key={a.path}
+              title={a.name || a.path}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 8px',
+                background: V5.surface2,
+                border: `1px solid ${V5.borderSoft}`,
+                borderRadius: 6,
+                fontSize: 11,
+                color: V5.textMuted,
+                fontFamily: 'ui-monospace, monospace',
+              }}
+            >
+              <IconPaperclip size={11} />
+              <span
+                style={{
+                  maxWidth: 160,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {a.name || a.path.split('/').pop()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {m.content && (
+        <div style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+      )}
     </div>
   );
 }

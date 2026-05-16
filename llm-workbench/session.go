@@ -50,6 +50,11 @@ type SessionMessage struct {
 	// when an assistant turn ran tools (M3 agent loop). Empty for
 	// plain chat turns.
 	ToolCalls json.RawMessage `json:"toolCalls,omitempty"`
+	// Attachments are files uploaded with a user turn (images for
+	// multimodal profiles). Empty on plain text turns. Old JSONL lines
+	// written before Phase B unmarshal with this nil — fully backwards
+	// compatible.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 }
 
 // sessionHeader is line 1 of every session file.

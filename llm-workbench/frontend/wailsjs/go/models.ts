@@ -63,6 +63,26 @@ export namespace main {
 	        this.telemetryOptIn = source["telemetryOptIn"];
 	    }
 	}
+	export class AttachmentRef {
+	    path: string;
+	    mime: string;
+	    kind: string;
+	    bytes: number;
+	    name?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AttachmentRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.mime = source["mime"];
+	        this.kind = source["kind"];
+	        this.bytes = source["bytes"];
+	        this.name = source["name"];
+	    }
+	}
 	export class BrowseFilter {
 	    type?: string;
 	    query?: string;
@@ -236,6 +256,7 @@ export namespace main {
 	export class ChatMessage {
 	    role: string;
 	    content: string;
+	    attachments?: AttachmentRef[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ChatMessage(source);
@@ -245,7 +266,26 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.role = source["role"];
 	        this.content = source["content"];
+	        this.attachments = this.convertValues(source["attachments"], AttachmentRef);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ChunkHit {
 	    chunkId: number;
@@ -1203,6 +1243,7 @@ export namespace main {
 	    ts: any;
 	    profileId?: string;
 	    toolCalls?: number[];
+	    attachments?: AttachmentRef[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMessage(source);
@@ -1215,6 +1256,7 @@ export namespace main {
 	        this.ts = this.convertValues(source["ts"], null);
 	        this.profileId = source["profileId"];
 	        this.toolCalls = source["toolCalls"];
+	        this.attachments = this.convertValues(source["attachments"], AttachmentRef);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

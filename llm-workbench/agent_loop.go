@@ -109,10 +109,11 @@ func (c *ChatService) streamWithTools(
 		})
 	}
 	for _, m := range messages {
-		convo = append(convo, map[string]any{
-			"role":    m.Role,
-			"content": m.Content,
-		})
+		entry, err := c.toAPIMessage(ac.ProjectID, m)
+		if err != nil {
+			return out, err
+		}
+		convo = append(convo, entry)
 	}
 
 	for iter := 0; iter < maxAgentIterations; iter++ {
@@ -304,7 +305,11 @@ func (c *ChatService) streamWithReAct(
 		{"role": "system", "content": buildReActPrompt(resolveSystemPromptFor(c, ac, mode), tools)},
 	}
 	for _, m := range messages {
-		convo = append(convo, map[string]any{"role": m.Role, "content": m.Content})
+		entry, err := c.toAPIMessage(ac.ProjectID, m)
+		if err != nil {
+			return out, err
+		}
+		convo = append(convo, entry)
 	}
 
 	for iter := 0; iter < maxAgentIterations; iter++ {

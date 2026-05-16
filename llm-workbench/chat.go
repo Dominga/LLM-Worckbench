@@ -18,8 +18,9 @@ import (
 )
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role        string          `json:"role"`
+	Content     string          `json:"content"`
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 }
 
 // ChatStats mirrors the `timings` block emitted by llama-server (and the
@@ -49,9 +50,10 @@ func reliableTimings(s *ChatStats) bool {
 }
 
 type ChatService struct {
-	registry *ServerRegistry
-	pm       *ProfileManager
-	sessions *SessionService
+	registry    *ServerRegistry
+	pm          *ProfileManager
+	sessions    *SessionService
+	attachments *AttachmentService
 
 	// Optional agent-loop deps. When non-nil and the active mode has a
 	// non-empty ToolWhitelist, StartSessionStream routes through the
@@ -68,12 +70,13 @@ type ChatService struct {
 	cancels map[string]context.CancelFunc
 }
 
-func NewChatService(registry *ServerRegistry, pm *ProfileManager, sessions *SessionService) *ChatService {
+func NewChatService(registry *ServerRegistry, pm *ProfileManager, sessions *SessionService, attachments *AttachmentService) *ChatService {
 	return &ChatService{
-		registry: registry,
-		pm:       pm,
-		sessions: sessions,
-		cancels:  make(map[string]context.CancelFunc),
+		registry:    registry,
+		pm:          pm,
+		sessions:    sessions,
+		attachments: attachments,
+		cancels:     make(map[string]context.CancelFunc),
 	}
 }
 
@@ -96,6 +99,71 @@ func (c *ChatService) AttachAgent(
 
 func (c *ChatService) Attach(ctx context.Context) {
 	c.ctx = ctx
+}
+
+// toAPIMessage shapes one in-flight message for the OpenAI-compat
+// request body. Plain-text turns keep `content` as a string (cheapest
+// to serialise and what older llama.cpp builds accept). Turns with
+// image attachments switch to the multimodal array form, one
+// `image_url` part per attached image with a `data:` URL.
+//
+// `projectID` is required to resolve attachment refs to bytes; the
+// caller passes "" when there is no project context, in which case
+// attachments are silently dropped (no caller without a project ever
+// produces attachments in practice).
+func (c *ChatService) toAPIMessage(projectID string, m ChatMessage) (map[string]any, error) {
+	if len(m.Attachments) == 0 || c.attachments == nil || projectID == "" {
+		return map[string]any{"role": m.Role, "content": m.Content}, nil
+	}
+	parts := make([]map[string]any, 0, len(m.Attachments)+1)
+	if m.Content != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+	}
+	for _, a := range m.Attachments {
+		if a.Kind != "image" {
+			continue
+		}
+		url, err := c.attachments.DataURL(projectID, a)
+		if err != nil {
+			return nil, fmt.Errorf("load attachment %s: %w", a.Path, err)
+		}
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": url},
+		})
+	}
+	return map[string]any{"role": m.Role, "content": parts}, nil
+}
+
+func (c *ChatService) toAPIMessages(projectID string, msgs []ChatMessage) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		am, err := c.toAPIMessage(projectID, m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, am)
+	}
+	return out, nil
+}
+
+// profileSupportsVision returns the best-effort capability answer for a
+// profile: the live /props probe if available, then the profile's
+// configured mmproj as a static fallback. Used to gate image
+// attachments at request-build time.
+func (c *ChatService) profileSupportsVision(profileID string) bool {
+	if c.registry != nil {
+		st := c.registry.Status(profileID)
+		if st.Caps.Source == "props" || st.Caps.Source == "mmproj" {
+			return st.Caps.Vision
+		}
+	}
+	if c.pm != nil {
+		if p, err := c.pm.Get(profileID); err == nil && p.MMProjPath != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // StreamID for client to subscribe to "chat:delta:<id>", "chat:done:<id>", "chat:error:<id>".
@@ -138,7 +206,7 @@ func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temp
 	c.mu.Unlock()
 
 	go func() {
-		full, err := c.runStream(streamCtx, streamID, baseURL, messages, temperature, debug)
+		full, err := c.runStream(streamCtx, streamID, baseURL, "", messages, temperature, debug)
 		// User-initiated cancel = clean stop. Keep partial content,
 		// drop the canceled error so frontend gets chat:done not chat:error.
 		if err != nil && errors.Is(err, context.Canceled) {
@@ -152,8 +220,10 @@ func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temp
 // StartSessionStream is the session-bound variant: it appends the user
 // message to the session's JSONL, streams a reply, and persists the
 // assistant response on completion. Mode and profile come from the
-// session header.
-func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, temperature float64, debug bool) (StreamHandle, error) {
+// session header. `attachments` are uploaded files (currently images
+// only) that should ride along with this turn; rejected up-front if the
+// active profile lacks vision support.
+func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, temperature float64, debug bool, attachments []AttachmentRef) (StreamHandle, error) {
 	if c.sessions == nil {
 		return StreamHandle{}, fmt.Errorf("session service unavailable")
 	}
@@ -165,9 +235,13 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 	if err != nil {
 		return StreamHandle{}, err
 	}
+	if len(attachments) > 0 && !c.profileSupportsVision(sess.ProfileID) {
+		return StreamHandle{}, fmt.Errorf("profile %q does not support image inputs", sess.ProfileID)
+	}
 	if err := c.sessions.AppendMessage(projectID, sessionID, SessionMessage{
-		Role:    "user",
-		Content: userText,
+		Role:        "user",
+		Content:     userText,
+		Attachments: attachments,
 	}); err != nil {
 		return StreamHandle{}, fmt.Errorf("persist user msg: %w", err)
 	}
@@ -178,7 +252,11 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 	msgs := make([]ChatMessage, 0, len(history))
 	for _, m := range history {
 		if m.Role == "user" || m.Role == "assistant" || m.Role == "system" {
-			msgs = append(msgs, ChatMessage{Role: m.Role, Content: m.Content})
+			msgs = append(msgs, ChatMessage{
+				Role:        m.Role,
+				Content:     m.Content,
+				Attachments: m.Attachments,
+			})
 		}
 	}
 
@@ -278,7 +356,7 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			toolCalls = res.ToolCalls
 			err = e
 		} else {
-			fullContent, err = c.runStream(streamCtx, streamID, baseURL, msgs, temperature, debug)
+			fullContent, err = c.runStream(streamCtx, streamID, baseURL, projectID, msgs, temperature, debug)
 		}
 		// User-initiated cancel = clean stop. Persist whatever the
 		// model produced so far, and emit chat:done (not chat:error)
@@ -329,7 +407,7 @@ func (c *ChatService) complete(profileID string, messages []ChatMessage, tempera
 	c.mu.Lock()
 	c.cancels[streamID] = cancel
 	c.mu.Unlock()
-	return c.runStream(ctx, streamID, baseURL, messages, temperature, false)
+	return c.runStream(ctx, streamID, baseURL, "", messages, temperature, false)
 }
 
 func (c *ChatService) CancelStream(streamID string) {
@@ -346,15 +424,19 @@ func (c *ChatService) CancelStream(streamID string) {
 // each delta to the frontend as `chat:delta:<id>`. Returns the full
 // accumulated content and any terminal error. Does NOT emit chat:done /
 // chat:error itself; finalize() handles that.
-func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, messages []ChatMessage, temperature float64, debug bool) (string, error) {
+func (c *ChatService) runStream(ctx context.Context, streamID, baseURL, projectID string, messages []ChatMessage, temperature float64, debug bool) (string, error) {
 	defer func() {
 		c.mu.Lock()
 		delete(c.cancels, streamID)
 		c.mu.Unlock()
 	}()
 
+	apiMsgs, err := c.toAPIMessages(projectID, messages)
+	if err != nil {
+		return "", err
+	}
 	body := map[string]any{
-		"messages":          messages,
+		"messages":          apiMsgs,
 		"stream":            true,
 		"timings_per_token": true,
 	}

@@ -294,6 +294,10 @@ export function SaveScript(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveScript'](arg1, arg2, arg3);
 }
 
+export function SaveSessionAttachment(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveSessionAttachment'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function SearchProject(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['SearchProject'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -302,8 +306,8 @@ export function ServerStatus() {
   return window['go']['main']['App']['ServerStatus']();
 }
 
-export function SessionChatStream(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4, arg5);
+export function SessionChatStream(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function SessionMessages(arg1, arg2) {
