@@ -497,6 +497,14 @@ func (c *ChatService) requestApprovalIfWrite(
 	if mode.Approval != ApprovalAlways {
 		return nil
 	}
+	// Skip the approval modal when args are obviously invalid (e.g. the
+	// model called edit_file with no path). The tool itself will return
+	// "path is required" on the next line, which the model can see and
+	// recover from. Showing an empty-path diff modal would just waste a
+	// click without giving the user anything meaningful to approve.
+	if !writeArgsLookValid(toolName, rawArgs) {
+		return nil
+	}
 	if c.approvals == nil {
 		// No manager wired → fail closed: better to reject than
 		// silently let writes through under approval=always.

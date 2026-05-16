@@ -23,6 +23,36 @@ var writeTools = map[string]bool{
 // operation that should run through the approval gate.
 func IsWriteTool(name string) bool { return writeTools[name] }
 
+// writeArgsLookValid is a cheap pre-check the approval gate uses to
+// avoid bothering the user with a modal for a tool call the tool itself
+// will reject anyway. Returns true when args look like they could
+// plausibly produce a write; false when they're obviously malformed
+// (missing required fields). Not a full validation — the tool still
+// runs its own check, this just decides whether to ask the human.
+func writeArgsLookValid(toolName string, rawArgs json.RawMessage) bool {
+	switch toolName {
+	case "edit_file", "make_directory":
+		var a struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(rawArgs, &a); err != nil {
+			return false
+		}
+		return a.Path != ""
+	case "append_memory":
+		var a struct {
+			Scope string `json:"scope"`
+			Entry string `json:"entry"`
+		}
+		if err := json.Unmarshal(rawArgs, &a); err != nil {
+			return false
+		}
+		return a.Scope != "" && a.Entry != ""
+	}
+	// Unknown write tools default to "ask" — safer than silently skipping.
+	return true
+}
+
 // ApprovalRequest is what the agent loop emits to the UI when a write
 // tool needs user confirmation under `approval=always`.
 type ApprovalRequest struct {
