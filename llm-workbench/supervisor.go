@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,14 +37,25 @@ const (
 // InstanceStatus is a snapshot of a single server's runtime state.
 // Sent to the frontend on `llama:status:<profileID>`.
 type InstanceStatus struct {
-	ProfileID string      `json:"profileId"`
-	State     ServerState `json:"state"`
-	Running   bool        `json:"running"`
-	Healthy   bool        `json:"healthy"`
-	PID       int         `json:"pid"`
-	BaseURL   string      `json:"baseUrl"`
-	UptimeSec int64       `json:"uptimeSec"`
-	StartedAt time.Time   `json:"startedAt,omitempty"`
+	ProfileID string       `json:"profileId"`
+	State     ServerState  `json:"state"`
+	Running   bool         `json:"running"`
+	Healthy   bool         `json:"healthy"`
+	PID       int          `json:"pid"`
+	BaseURL   string       `json:"baseUrl"`
+	UptimeSec int64        `json:"uptimeSec"`
+	StartedAt time.Time    `json:"startedAt,omitempty"`
+	Caps      Capabilities `json:"caps"`
+}
+
+// Capabilities advertises what input modalities the live model accepts.
+// Populated on the first `/props` probe after the server reports healthy.
+// `Source` makes it possible for the UI to distinguish a confirmed
+// answer ("props") from a best-effort guess based on the profile
+// configuration ("mmproj") or absence of any evidence ("unknown").
+type Capabilities struct {
+	Vision bool   `json:"vision"`
+	Source string `json:"source"` // "props" | "mmproj" | "unknown"
 }
 
 // InstanceMetrics is a small sample bundle pushed periodically while a
@@ -107,6 +119,9 @@ type ServerInstance struct {
 	tpsSpark []float64
 	lastTPS  float64
 	reqs     int64
+
+	caps       Capabilities
+	capsProbed bool
 }
 
 func newServerInstance(profile Profile, ctx context.Context, builds *BuildManager) *ServerInstance {
@@ -243,6 +258,10 @@ func (si *ServerInstance) Start() error {
 	si.tpsSpark = nil
 	si.lastTPS = 0
 	si.reqs = 0
+	// Re-probe /props on every restart — model/mmproj may have changed
+	// between launches.
+	si.caps = Capabilities{}
+	si.capsProbed = false
 	// Reset log ring on each Start so the user sees only the current run.
 	// Previous-run output stays in the JSONL/ring of the dead process and
 	// is lost when the instance is replaced.
@@ -332,6 +351,7 @@ func (si *ServerInstance) Status() InstanceStatus {
 		State:     si.state,
 		BaseURL:   si.profile.BaseURL(),
 		Healthy:   si.healthy,
+		Caps:      si.caps,
 	}
 	if si.cmd != nil && si.cmd.Process != nil {
 		st.Running = true
@@ -373,6 +393,77 @@ func (si *ServerInstance) healthCheckOnce() bool {
 	return resp.StatusCode == 200
 }
 
+// probeCapabilities pulls llama-server's `/props` once and records what
+// the running model can accept. The endpoint shape varies across
+// llama.cpp builds, so a handful of candidate fields are consulted:
+//
+//   - `modalities`: []string{"text","vision"} (newer mainline)
+//   - `capabilities.vision`: bool (some forks)
+//   - `mtmd` / `has_mmproj` / `multimodal`: bool (older / fork-specific)
+//
+// When `/props` doesn't disclose vision but the profile points at an
+// mmproj file, the source falls back to "mmproj" — a best-effort guess
+// based on the user's launch arguments. Otherwise Source stays "unknown".
+func (si *ServerInstance) probeCapabilities() {
+	si.mu.Lock()
+	if si.capsProbed {
+		si.mu.Unlock()
+		return
+	}
+	baseURL := si.profile.BaseURL()
+	mmproj := si.profile.MMProjPath
+	si.mu.Unlock()
+
+	caps := Capabilities{Source: "unknown"}
+	client := &http.Client{Timeout: 3 * time.Second}
+	if resp, err := client.Get(baseURL + "/props"); err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == 200 {
+			var props map[string]any
+			if json.NewDecoder(resp.Body).Decode(&props) == nil {
+				if visionFromProps(props) {
+					caps.Vision = true
+					caps.Source = "props"
+				}
+			}
+		}
+	}
+	if !caps.Vision && mmproj != "" {
+		caps.Vision = true
+		caps.Source = "mmproj"
+	}
+
+	si.mu.Lock()
+	si.caps = caps
+	si.capsProbed = true
+	si.mu.Unlock()
+	si.appendLog("stdout", fmt.Sprintf("caps: vision=%v source=%s", caps.Vision, caps.Source))
+	si.emitStatus()
+}
+
+// visionFromProps inspects the candidate fields llama-server forks use
+// to advertise vision support. Returns true on the first positive match.
+func visionFromProps(props map[string]any) bool {
+	if v, ok := props["modalities"].([]any); ok {
+		for _, m := range v {
+			if s, ok := m.(string); ok && strings.EqualFold(s, "vision") {
+				return true
+			}
+		}
+	}
+	if caps, ok := props["capabilities"].(map[string]any); ok {
+		if b, ok := caps["vision"].(bool); ok && b {
+			return true
+		}
+	}
+	for _, k := range []string{"mtmd", "has_mmproj", "multimodal", "vision"} {
+		if b, ok := props[k].(bool); ok && b {
+			return true
+		}
+	}
+	return false
+}
+
 // runHealthAndMetrics drives the per-instance liveness probe and metrics
 // emit ticker. The probe transitions starting→running on first 200; the
 // ticker pushes throughput samples at metricsTickSec cadence.
@@ -400,6 +491,10 @@ func (si *ServerInstance) runHealthAndMetrics(ctx context.Context) {
 				si.state = StateRunning
 				si.mu.Unlock()
 				si.appendLog("stdout", "server healthy")
+				// Capabilities probe runs once per up-transition. Off the
+				// hot path so a slow /props (rare) never blocks the
+				// status emit users see in the UI.
+				go si.probeCapabilities()
 				si.emitStatus()
 				healthy = true
 				probeTimer.Reset(5 * time.Second) // slow down once healthy

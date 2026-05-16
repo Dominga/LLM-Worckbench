@@ -42,6 +42,7 @@ export const emptyInstanceStatus = (id: string): InstanceStatus =>
     pid: 0,
     baseUrl: '',
     uptimeSec: 0,
+    caps: { vision: false, source: 'unknown' },
   }) as unknown as InstanceStatus;
 
 export const emptyInstanceMetrics = (id: string): InstanceMetrics =>

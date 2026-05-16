@@ -577,6 +577,13 @@ func newGlobMatcher(include, exclude []string) (*globMatcher, error) {
 }
 
 func (m *globMatcher) fileMatches(rel string) bool {
+	// Binary/media/archive extensions are never useful as text chunks.
+	// Gate them before the user-supplied include/exclude so a generic
+	// `**` include doesn't sweep e.g. PNG attachments into the vector
+	// store as garbage UTF-8.
+	if isBinaryExt(rel) {
+		return false
+	}
 	for _, re := range m.exclude {
 		if re.MatchString(rel) {
 			return false
@@ -588,6 +595,33 @@ func (m *globMatcher) fileMatches(rel string) bool {
 		}
 	}
 	return false
+}
+
+// Extensions skipped from indexing regardless of include/exclude config.
+// Lowercase, leading dot. Add to the list when a new binary format
+// shows up in a project; don't reach for content-sniffing until this
+// stops being enough.
+var binaryExts = map[string]struct{}{
+	".png": {}, ".jpg": {}, ".jpeg": {}, ".gif": {}, ".webp": {},
+	".bmp": {}, ".tif": {}, ".tiff": {}, ".ico": {}, ".heic": {}, ".avif": {},
+	".pdf":  {},
+	".mp3":  {}, ".wav": {}, ".flac": {}, ".ogg": {}, ".m4a": {}, ".opus": {},
+	".mp4":  {}, ".mov": {}, ".webm": {}, ".mkv": {}, ".avi": {},
+	".zip":  {}, ".tar": {}, ".gz": {}, ".tgz": {}, ".bz2": {}, ".xz": {}, ".7z": {}, ".rar": {},
+	".woff": {}, ".woff2": {}, ".ttf": {}, ".otf": {}, ".eot": {},
+	".so":   {}, ".dll": {}, ".dylib": {}, ".a": {}, ".o": {}, ".class": {},
+	".jar":  {}, ".war": {}, ".exe": {}, ".bin": {}, ".dat": {},
+	".gguf": {}, ".safetensors": {}, ".pt": {}, ".pth": {}, ".onnx": {}, ".npz": {}, ".npy": {},
+	".db":   {}, ".sqlite": {}, ".sqlite3": {},
+}
+
+func isBinaryExt(rel string) bool {
+	ext := strings.ToLower(filepath.Ext(rel))
+	if ext == "" {
+		return false
+	}
+	_, ok := binaryExts[ext]
+	return ok
 }
 
 // dirExcluded returns true when the directory itself is fully excluded

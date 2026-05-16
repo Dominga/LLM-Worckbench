@@ -219,6 +219,20 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class Capabilities {
+	    vision: boolean;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Capabilities(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.vision = source["vision"];
+	        this.source = source["source"];
+	    }
+	}
 	export class ChatMessage {
 	    role: string;
 	    content: string;
@@ -673,6 +687,7 @@ export namespace main {
 	    uptimeSec: number;
 	    // Go type: time
 	    startedAt?: any;
+	    caps: Capabilities;
 	
 	    static createFrom(source: any = {}) {
 	        return new InstanceStatus(source);
@@ -688,6 +703,7 @@ export namespace main {
 	        this.baseUrl = source["baseUrl"];
 	        this.uptimeSec = source["uptimeSec"];
 	        this.startedAt = this.convertValues(source["startedAt"], null);
+	        this.caps = this.convertValues(source["caps"], Capabilities);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
