@@ -179,7 +179,11 @@ export function ProfileForm({ opened, mode, initial, profiles, onClose, onSaved 
 
   useEffect(() => {
     if (!opened) return;
-    setForm(initial && mode === 'edit' ? fromProfile(initial) : emptyForm());
+    // `initial` is honored in both modes so a Duplicate flow can prefill
+    // every field while opening the form in create mode (caller is
+    // expected to blank/rename the ID and bump the port before passing
+    // the seed in).
+    setForm(initial ? fromProfile(initial) : emptyForm());
     ListBuilds()
       .then((bs) => setBuilds(bs ?? []))
       .catch(() => setBuilds([]));

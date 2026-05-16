@@ -37,6 +37,7 @@ export type MainPaneProps = {
   onRestart: (id: string) => void;
   onCreateProfile: () => void;
   onEditProfile: (p: Profile) => void;
+  onDuplicateProfile: (p: Profile) => void;
   onDeleteProfile: (p: Profile) => void;
   onChangeSessionMode: (modeId: string) => void;
   onAfterChat: () => Promise<void>;
@@ -108,6 +109,7 @@ export function MainPane(props: MainPaneProps) {
           onRestart={props.onRestart}
           onCreateProfile={props.onCreateProfile}
           onEditProfile={props.onEditProfile}
+          onDuplicateProfile={props.onDuplicateProfile}
           onDeleteProfile={props.onDeleteProfile}
         />
       </div>

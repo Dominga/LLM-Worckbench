@@ -38,6 +38,7 @@ export type ServersTabProps = {
   onRestart: (id: string) => void;
   onCreateProfile: () => void;
   onEditProfile: (p: Profile) => void;
+  onDuplicateProfile: (p: Profile) => void;
   onDeleteProfile: (p: Profile) => void;
 };
 
@@ -54,6 +55,7 @@ export function ServersTab({
   onRestart,
   onCreateProfile,
   onEditProfile,
+  onDuplicateProfile,
   onDeleteProfile,
 }: ServersTabProps) {
   const [filter, setFilter] = useState<Kind>('all');
@@ -375,6 +377,7 @@ export function ServersTab({
                         onStop={() => onStop(p.ID)}
                         onRestart={() => onRestart(p.ID)}
                         onEdit={() => onEditProfile(p)}
+                        onDuplicate={() => onDuplicateProfile(p)}
                       />
                     ))}
                 </div>
@@ -502,7 +505,10 @@ export function ServersTab({
                 <button onClick={() => onEditProfile(selected)} style={detailPrimaryBtnStyle}>
                   <IconEdit size={11} /> Edit profile
                 </button>
-                <SmallIconBtn title="Duplicate" disabled>
+                <SmallIconBtn
+                  title="Duplicate profile (keep settings, swap model/mmproj)"
+                  onClick={() => onDuplicateProfile(selected)}
+                >
                   <IconCopy size={11} />
                 </SmallIconBtn>
                 <SmallIconBtn title="Restart" onClick={() => onRestart(selected.ID)}>
@@ -659,6 +665,7 @@ function ServerRow({
   onStop,
   onRestart,
   onEdit,
+  onDuplicate,
 }: {
   profile: Profile;
   status?: InstanceStatus;
@@ -669,6 +676,7 @@ function ServerRow({
   onStop: () => void;
   onRestart: () => void;
   onEdit: () => void;
+  onDuplicate: () => void;
 }) {
   const state = (status?.state || 'stopped') as string;
   const isOn = state === 'running' || state === 'starting';
@@ -746,6 +754,15 @@ function ServerRow({
             }}
           >
             <IconEdit size={11} />
+          </SmallIconBtn>
+          <SmallIconBtn
+            title="Duplicate profile (keep settings, swap model/mmproj)"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDuplicate();
+            }}
+          >
+            <IconCopy size={11} />
           </SmallIconBtn>
         </div>
       </div>

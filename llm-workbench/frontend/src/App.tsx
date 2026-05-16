@@ -292,6 +292,27 @@ export default function App() {
     setFormInitial(p);
     setFormOpen(true);
   };
+  const onDuplicateProfile = (p: Profile) => {
+    // Pick the first non-colliding ID (`<src>-copy`, `-copy2`, …) and
+    // bump the port past every existing one — duplicates are typically
+    // "same llama.cpp settings, different model/mmproj", and a fresh
+    // port avoids start-up collisions when both run side-by-side.
+    const taken = new Set(profiles.map((x) => x.ID));
+    let nextId = `${p.ID}-copy`;
+    let n = 2;
+    while (taken.has(nextId)) {
+      nextId = `${p.ID}-copy${n++}`;
+    }
+    const maxPort = profiles.reduce((m, x) => (x.Port > m ? x.Port : m), p.Port);
+    setFormMode('create');
+    setFormInitial({
+      ...p,
+      ID: nextId,
+      Port: maxPort + 1,
+      Autostart: false,
+    } as Profile);
+    setFormOpen(true);
+  };
   const onDeleteProfile = (p: Profile) => {
     setConfirm({
       title: 'Delete profile',
@@ -690,6 +711,7 @@ export default function App() {
           onRestart={onRestart}
           onCreateProfile={onCreateProfile}
           onEditProfile={onEditProfile}
+          onDuplicateProfile={onDuplicateProfile}
           onDeleteProfile={onDeleteProfile}
           onChangeSessionMode={onChangeSessionMode}
           onAfterChat={refreshActiveSession}
