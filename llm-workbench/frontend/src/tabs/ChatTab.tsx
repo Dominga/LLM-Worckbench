@@ -6,6 +6,7 @@ import {
   IconFile,
   IconLayoutSidebarLeftCollapse,
   IconPaperclip,
+  IconRefresh,
   IconSend,
   IconPlayerStop,
   IconSparkles,
@@ -29,6 +30,7 @@ import { MarkdownEditor, EditorHandle } from '../components/Editor';
 import { MarkdownPreview } from '../components/Preview';
 import {
   SessionChatStream,
+  SessionChatRetry,
   ChatStream,
   ChatCancel,
   SaveSessionAttachment,
@@ -616,17 +618,27 @@ export function ChatTab({
           ? await SessionChatStream(activeProject.ID, sessionForSend.id, userText, 0.7, debug, attachmentRefs)
           : await ChatStream(activeProfileId, [new main.ChatMessage({ role: 'user', content: userText })], 0.7, debug);
       setPendingAttachments([]);
-      const id = handle.streamId;
-      streamIdRef.current = id;
+      subscribeToStream(handle.streamId);
+    } catch (e: any) {
+      notifications.show({ color: 'red', title: 'Chat failed', message: String(e) });
+      setStreaming(false);
+    }
+  };
 
-      const deltaEvent = `chat:delta:${id}`;
-      const doneEvent = `chat:done:${id}`;
-      const errEvent = `chat:error:${id}`;
-      const statsEvent = `chat:stats:${id}`;
-      const toolReqEvent = `agent:tool:request:${id}`;
-      const toolResEvent = `agent:tool:result:${id}`;
-      const debugReqEvent = `chat:debug:request:${id}`;
-      const debugRawEvent = `chat:debug:raw:${id}`;
+  // subscribeToStream wires the per-stream event listeners (deltas, tool
+  // chips, debug payloads, terminal done/error) for whichever streamID
+  // the backend just handed us. Shared by initial send() and retry().
+  const subscribeToStream = (id: string) => {
+    streamIdRef.current = id;
+
+    const deltaEvent = `chat:delta:${id}`;
+    const doneEvent = `chat:done:${id}`;
+    const errEvent = `chat:error:${id}`;
+    const statsEvent = `chat:stats:${id}`;
+    const toolReqEvent = `agent:tool:request:${id}`;
+    const toolResEvent = `agent:tool:result:${id}`;
+    const debugReqEvent = `chat:debug:request:${id}`;
+    const debugRawEvent = `chat:debug:raw:${id}`;
 
       // We MUST await onAfterChat (which reloads activeSessionMessages
       // from JSONL) BEFORE flipping streaming=false. Otherwise the
@@ -738,8 +750,43 @@ export function ChatTab({
       EventsOn(debugRawEvent, (p: { iteration: number; content: string; finishReason?: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }) => {
         upsertDebug(p.iteration, { raw: { content: p.content, finishReason: p.finishReason, toolCalls: p.toolCalls } });
       });
+  };
+
+  // retry re-runs the last user turn after dropping whatever assistant
+  // content the previous attempt produced (often empty after a server
+  // crash). The backend truncates the JSONL and starts a new stream;
+  // locally we just blank out the trailing assistant bubble so deltas
+  // can land into it again.
+  const retry = async () => {
+    if (streaming) return;
+    if (!activeProject || !activeSession) {
+      notifications.show({
+        color: 'yellow',
+        title: 'Retry unavailable',
+        message: 'Retry only works inside a persisted project session.',
+      });
+      return;
+    }
+    setMessages((prev) => {
+      const out = prev.slice();
+      const lastIdx = out.length - 1;
+      const last = out[lastIdx];
+      if (last && last.role === 'assistant') {
+        out[lastIdx] = { ...last, content: '', toolCalls: undefined, debug: undefined };
+      } else {
+        // No assistant bubble yet (rare: send crashed before placeholder
+        // landed). Append a fresh empty one so deltas have a target.
+        out.push({ id: rid(), role: 'assistant', content: '' });
+      }
+      return out;
+    });
+    setStreaming(true);
+    setStats(null);
+    try {
+      const handle = await SessionChatRetry(activeProject.ID, activeSession.id, 0.7, debug);
+      subscribeToStream(handle.streamId);
     } catch (e: any) {
-      notifications.show({ color: 'red', title: 'Chat failed', message: String(e) });
+      notifications.show({ color: 'red', title: 'Retry failed', message: String(e?.message ?? e) });
       setStreaming(false);
     }
   };
@@ -965,18 +1012,21 @@ export function ChatTab({
                 )}
               </div>
             )}
-            {messages.map((m, idx) =>
-              m.role === 'user' ? (
-                <UserBubble key={m.id} m={m} />
+            {messages.map((m, idx) => {
+              const isLast = idx === messages.length - 1;
+              const canRetry = !streaming && isLast && !!activeProject && !!activeSession;
+              return m.role === 'user' ? (
+                <UserBubble key={m.id} m={m} onRetry={canRetry ? retry : undefined} />
               ) : (
                 <AssistantBubble
                   key={m.id}
                   m={m}
-                  live={streaming && idx === messages.length - 1}
+                  live={streaming && isLast}
                   onOpenFilePath={onOpenFilePath}
+                  onRetry={canRetry ? retry : undefined}
                 />
-              ),
-            )}
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -1721,11 +1771,11 @@ function rid(): string {
 
 // ─────────────────────────── Sub-components ────────────────────────────
 
-function UserBubble({ m }: { m: ChatMessage }) {
+function UserBubble({ m, onRetry }: { m: ChatMessage; onRetry?: () => void }) {
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
     <div
       style={{
-        alignSelf: 'flex-end',
         maxWidth: '90%',
         background: V5.surface,
         padding: '10px 13px',
@@ -1770,6 +1820,28 @@ function UserBubble({ m }: { m: ChatMessage }) {
       {m.content && (
         <div style={{ fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{m.content}</div>
       )}
+    </div>
+    {onRetry && (
+      <button
+        onClick={onRetry}
+        title="Resend last turn (handy after a server crash)"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '3px 8px',
+          background: 'transparent',
+          border: `1px solid ${V5.borderSoft}`,
+          color: V5.textMuted,
+          borderRadius: 6,
+          cursor: 'pointer',
+          fontSize: 11,
+          fontFamily: 'inherit',
+        }}
+      >
+        <IconRefresh size={11} /> Retry
+      </button>
+    )}
     </div>
   );
 }
@@ -1853,10 +1925,12 @@ function AssistantBubble({
   m,
   live,
   onOpenFilePath,
+  onRetry,
 }: {
   m: ChatMessage;
   live: boolean;
   onOpenFilePath: (path: string) => void;
+  onRetry?: () => void;
 }) {
   const { thinking, answer, thinkingDone } = splitThinking(m.content, live);
   const hasChips = !!m.toolCalls && m.toolCalls.length > 0;
@@ -1898,6 +1972,29 @@ function AssistantBubble({
         )}
         {hasChips && <ToolCallChips calls={m.toolCalls!} onOpenFilePath={onOpenFilePath} />}
         {m.debug && m.debug.length > 0 && <DebugPanel entries={m.debug} />}
+        {onRetry && (
+          <div style={{ marginTop: 6 }}>
+            <button
+              onClick={onRetry}
+              title="Resend last turn (handy after a server crash)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '3px 8px',
+                background: 'transparent',
+                border: `1px solid ${V5.borderSoft}`,
+                color: V5.textMuted,
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontFamily: 'inherit',
+              }}
+            >
+              <IconRefresh size={11} /> Retry
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -154,6 +154,8 @@ export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,ar
 
 export function ServerStatus():Promise<main.Status>;
 
+export function SessionChatRetry(arg1:string,arg2:string,arg3:number,arg4:boolean):Promise<main.StreamHandle>;
+
 export function SessionChatStream(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:Array<main.AttachmentRef>):Promise<main.StreamHandle>;
 
 export function SessionMessages(arg1:string,arg2:string):Promise<Array<main.SessionMessage>>;

@@ -231,8 +231,7 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 	if err != nil {
 		return StreamHandle{}, err
 	}
-	baseURL, err := c.resolveBaseURL(sess.ProfileID)
-	if err != nil {
+	if _, err := c.resolveBaseURL(sess.ProfileID); err != nil {
 		return StreamHandle{}, err
 	}
 	if len(attachments) > 0 && !c.profileSupportsVision(sess.ProfileID) {
@@ -244,6 +243,56 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 		Attachments: attachments,
 	}); err != nil {
 		return StreamHandle{}, fmt.Errorf("persist user msg: %w", err)
+	}
+	return c.spawnSessionTurn(projectID, sessionID, sess, temperature, debug)
+}
+
+// RetrySessionStream re-runs the last user turn through the model
+// without re-asking the user to type it again. Drops any trailing
+// assistant text / tool-call records from the JSONL (a crashed stream
+// might have left a stub there) and kicks off a fresh stream over the
+// same history. No-ops with an error if there is no user turn to retry.
+func (c *ChatService) RetrySessionStream(projectID, sessionID string, temperature float64, debug bool) (StreamHandle, error) {
+	if c.sessions == nil {
+		return StreamHandle{}, fmt.Errorf("session service unavailable")
+	}
+	sess, err := c.sessions.Get(projectID, sessionID)
+	if err != nil {
+		return StreamHandle{}, err
+	}
+	if _, err := c.resolveBaseURL(sess.ProfileID); err != nil {
+		return StreamHandle{}, err
+	}
+	// Confirm there's actually a user turn waiting to be replayed —
+	// retrying a header-only session would silently produce nothing.
+	history, err := c.sessions.LoadMessages(projectID, sessionID)
+	if err != nil {
+		return StreamHandle{}, fmt.Errorf("load history: %w", err)
+	}
+	hasUser := false
+	for _, m := range history {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		return StreamHandle{}, fmt.Errorf("nothing to retry: session has no user turn yet")
+	}
+	if _, err := c.sessions.TruncateTrailingAssistant(projectID, sessionID); err != nil {
+		return StreamHandle{}, fmt.Errorf("truncate trailing assistant: %w", err)
+	}
+	return c.spawnSessionTurn(projectID, sessionID, sess, temperature, debug)
+}
+
+// spawnSessionTurn is the shared post-persist tail used by both
+// StartSessionStream and RetrySessionStream: load the (already-persisted)
+// history, pick agent vs plain wire, fork the streaming goroutine, and
+// return a StreamHandle the frontend can subscribe to.
+func (c *ChatService) spawnSessionTurn(projectID, sessionID string, sess Session, temperature float64, debug bool) (StreamHandle, error) {
+	baseURL, err := c.resolveBaseURL(sess.ProfileID)
+	if err != nil {
+		return StreamHandle{}, err
 	}
 	history, err := c.sessions.LoadMessages(projectID, sessionID)
 	if err != nil {

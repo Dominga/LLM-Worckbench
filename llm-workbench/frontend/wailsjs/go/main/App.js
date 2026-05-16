@@ -306,6 +306,10 @@ export function ServerStatus() {
   return window['go']['main']['App']['ServerStatus']();
 }
 
+export function SessionChatRetry(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SessionChatRetry'](arg1, arg2, arg3, arg4);
+}
+
 export function SessionChatStream(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

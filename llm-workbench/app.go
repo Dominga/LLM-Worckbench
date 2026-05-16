@@ -912,6 +912,17 @@ func (a *App) SessionChatStream(projectID, sessionID, userText string, temperatu
 	return a.chat.StartSessionStream(projectID, sessionID, userText, temperature, debug, attachments)
 }
 
+// SessionChatRetry re-runs the last user turn after dropping any
+// trailing assistant text the previous attempt produced. Used by the
+// frontend's Retry button — handy when llama-server crashed mid-stream
+// or the model spat out garbage.
+func (a *App) SessionChatRetry(projectID, sessionID string, temperature float64, debug bool) (StreamHandle, error) {
+	if a.chat == nil {
+		return StreamHandle{}, fmt.Errorf("chat service not initialized")
+	}
+	return a.chat.RetrySessionStream(projectID, sessionID, temperature, debug)
+}
+
 // SaveSessionAttachment persists an uploaded file under the session's
 // attachments dir and returns a ref the frontend can pass back to
 // SessionChatStream. `dataB64` is the raw file content base64-encoded

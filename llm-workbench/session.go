@@ -370,6 +370,75 @@ func (s *SessionService) LoadMessages(projectID, sessionID string) ([]SessionMes
 	return out, nil
 }
 
+// TruncateTrailingAssistant rewrites the JSONL keeping the header plus
+// every message up to and including the last `user` turn — anything
+// after it (assistant text, tool calls) is dropped. Returns true if
+// anything was actually removed. Used by Retry: the next stream picks
+// up from the same user prompt and produces a fresh assistant turn.
+//
+// If there's no user turn at all (header-only session) the file is
+// left untouched and the return is false.
+func (s *SessionService) TruncateTrailingAssistant(projectID, sessionID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	path, err := s.sessionPath(projectID, sessionID)
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 2 {
+		return false, nil // header-only or empty
+	}
+	// lines[0] = header; messages start at lines[1]. A trailing newline
+	// produces an empty last element from Split — ignore it on writeback.
+	lastUserIdx := -1
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "" {
+			continue
+		}
+		var m SessionMessage
+		if err := json.Unmarshal([]byte(lines[i]), &m); err != nil {
+			continue
+		}
+		if m.Role == "user" {
+			lastUserIdx = i
+		}
+	}
+	if lastUserIdx < 0 {
+		return false, nil
+	}
+	// Determine if there's anything to truncate after lastUserIdx.
+	trailingHasContent := false
+	for i := lastUserIdx + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			trailingHasContent = true
+			break
+		}
+	}
+	if !trailingHasContent {
+		return false, nil
+	}
+
+	kept := lines[:lastUserIdx+1]
+	body := strings.Join(kept, "\n") + "\n"
+
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
+	_, _ = s.rewriteHeaderUnsafe(projectID, sessionID, func(_ *sessionHeader) {})
+	return true, nil
+}
+
 // AppendMessage appends one message line and bumps UpdatedAt in the
 // header. Concurrent appends serialize through the service mutex.
 func (s *SessionService) AppendMessage(projectID, sessionID string, msg SessionMessage) error {
