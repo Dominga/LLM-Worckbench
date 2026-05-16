@@ -90,6 +90,7 @@ func (c *ChatService) streamWithTools(
 	mode Mode,
 	registry *ToolRegistry,
 	ac *AgentContext,
+	debug bool,
 ) (AgentLoopResult, error) {
 	tools := buildToolSchemas(registry, mode.ToolWhitelist)
 
@@ -124,6 +125,9 @@ func (c *ChatService) streamWithTools(
 			"timings_per_token": true,
 		}
 		buf, _ := json.Marshal(body)
+		if debug {
+			c.emitDebugRequest(streamID, iter, baseURL, body)
+		}
 		req, err := http.NewRequestWithContext(ctx, "POST",
 			baseURL+"/v1/chat/completions", bytes.NewReader(buf))
 		if err != nil {
@@ -142,8 +146,19 @@ func (c *ChatService) streamWithTools(
 			return out, fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 		}
 
-		content, calls, finish, err := c.parseToolStream(streamID, resp.Body)
+		content, calls, finish, err := c.parseToolStream(streamID, resp.Body, debug, iter)
 		resp.Body.Close()
+		if debug {
+			tcRaw := make([]map[string]string, 0, len(calls))
+			for _, tc := range calls {
+				tcRaw = append(tcRaw, map[string]string{
+					"id":        tc.ID,
+					"name":      tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				})
+			}
+			c.emitDebugRaw(streamID, iter, content, finish, tcRaw)
+		}
 		// Append partial content BEFORE error short-circuit so a mid-stream
 		// cancel still carries the tokens the user already saw.
 		if content != "" {
@@ -280,6 +295,7 @@ func (c *ChatService) streamWithReAct(
 	mode Mode,
 	registry *ToolRegistry,
 	ac *AgentContext,
+	debug bool,
 ) (AgentLoopResult, error) {
 	tools := registry.Filter(mode.ToolWhitelist)
 	out := AgentLoopResult{}
@@ -303,6 +319,9 @@ func (c *ChatService) streamWithReAct(
 			"stop": []string{"\nObservation:"},
 		}
 		buf, _ := json.Marshal(body)
+		if debug {
+			c.emitDebugRequest(streamID, iter, baseURL, body)
+		}
 		req, err := http.NewRequestWithContext(ctx, "POST",
 			baseURL+"/v1/chat/completions", bytes.NewReader(buf))
 		if err != nil {
@@ -320,8 +339,11 @@ func (c *ChatService) streamWithReAct(
 			return out, fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 		}
 		// Reuse the plain SSE drain — ReAct runs without tools[].
-		full, sErr := c.parseSSE(streamID, resp.Body)
+		full, sErr := c.parseSSE(streamID, resp.Body, debug, iter)
 		resp.Body.Close()
+		if debug {
+			c.emitDebugRaw(streamID, iter, full, "", nil)
+		}
 		// Append partial content BEFORE error short-circuit so a mid-stream
 		// cancel still carries the tokens the user already saw.
 		out.FinalContent += full
@@ -566,10 +588,11 @@ func serializeToolCallsForRequest(calls []openAIToolCall) []map[string]any {
 //	content      — concatenated `delta.content`
 //	calls        — fully-assembled tool calls (empty when none)
 //	finishReason — "stop" | "tool_calls" | "length" | ""
-func (c *ChatService) parseToolStream(streamID string, body io.Reader) (string, []openAIToolCall, string, error) {
+func (c *ChatService) parseToolStream(streamID string, body io.Reader, debug bool, iter int) (string, []openAIToolCall, string, error) {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 128*1024), 4*1024*1024)
 	var contentBuf strings.Builder
+	lastDebugEmit := time.Now()
 
 	// Index → partial tool call, since the model streams them in pieces.
 	partial := map[int]*openAIToolCall{}
@@ -608,6 +631,10 @@ func (c *ChatService) parseToolStream(streamID string, body io.Reader) (string, 
 			if ch.Delta.Content != "" {
 				contentBuf.WriteString(ch.Delta.Content)
 				c.emit("chat:delta:"+streamID, ch.Delta.Content)
+				if debug && time.Since(lastDebugEmit) >= 150*time.Millisecond {
+					c.emitDebugRaw(streamID, iter, contentBuf.String(), "", nil)
+					lastDebugEmit = time.Now()
+				}
 			}
 			for _, tc := range ch.Delta.ToolCalls {
 				cur, ok := partial[tc.Index]

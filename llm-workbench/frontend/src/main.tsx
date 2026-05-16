@@ -4,6 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
+import 'katex/dist/katex.min.css';
 import './style.css';
 import { v5Theme } from './theme';
 import App from './App';

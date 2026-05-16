@@ -145,29 +145,6 @@ Mirror modes: `~/.config/llm-workbench/scripts/` alongside per-project
 `<project>/.llm-workshop/scripts/`, project overrides global by name. Once landed,
 list-merge in `ScriptStore`.
 
-#### TD27 — Chat "debug" mode: show full model exchange
-
-Дебаг-тоггл в чате, при включении бабблы показывают **именно то, что ушло
-модели** и **что пришло сырым**, не сглаженный markdown-вид:
-
-- весь итоговый `messages[]` (system + tools + history + user) — раскрываемый
-  блок перед каждым assistant-ответом, в виде свёрнутого JSON с подсветкой
-  ролей;
-- сырой ответ модели до `splitThinking` / sanitize / markdown-render
-  (включая `<think>`, tool-call JSON, control-tokens);
-- параметры запроса (temperature, top_p, max_tokens, stop, applied template
-  name) — компактным чипом;
-- токен-таймин (TTFT, t/s) — переиспользовать счётчики из заголовка.
-
-Реализация: `chat.go` / `agent_loop.go` уже знают финальный payload — добавить
-событие `chat:debug:<streamId>` с этим payload-ом (только если режим включён,
-иначе не эмитить чтоб не плодить ивенты). На фронте — отдельный
-`DebugPanel` в баббле, скрытый по дефолту, тоггл в шапке чата (или в
-TD23-settings как глобальный default).
-
-**Files:** `chat.go`, `agent_loop.go` (debug-emit gate),
-`frontend/src/tabs/ChatTab.tsx` (тоггл + `DebugPanel`), `frontend/src/style.css`.
-
 ### Builds & forks
 
 #### TD20 — Multi-platform cross-builds
@@ -211,6 +188,7 @@ drift. Acceptable for v1; TD21 closes it.)
 - **TD30** — Docs: `docs/prompt-variables.md` reference listing every `{{...}}` substitution available in mode templates (`project.*`, `param.<name>`, `memory.global`, `memory.project`) with an example and a note on how to add new ones.
 - **TD23** — Global app settings persisted to `~/.config/llm-workbench/settings.toml`: theme (stub — dark only in v1), startup mode (blank chat vs. reopen-last), auto-refresh registry on launch (default on), auto-install default artifacts on every launch (default off — explicit install state preferred), telemetry opt-in (placeholder for DESIGN §10.5). `AppSettings` + `SettingsService` (paths helper, atomic save, defaults-on-missing-file, schema-merge for new fields landing in older files). App startup gates registry refresh + auto-install behind the toggles. UI: Settings → General tab with eager-save form (every toggle flushes to disk). `settings.go` + tests, `paths.go` (`settingsPath`), `app.go` (bindings + startup wiring), `frontend/src/components/{SettingsModal,GeneralSettingsPanel}.tsx`.
 - **TD19 / TD33** — External registry for modes + families. `RegistryService` manages subscribed sources in `~/.config/llm-workbench/registry/sources.toml`, caches per-source `index.json` files, tracks installed artifacts in `installed.toml`. Schema covers `type` (mode|family), `version`, optional aggregate sha256, files list. Install verifies sha + atomic-writes into the per-type dest; uninstall is idempotent. Curated repo at `github.com/Dominga/llm-workbench-registry` with `scripts/build_index.py` + GitHub Action that rebuilds `index.json` on every push. App seeds the default source on first launch. Settings → Registry UI (sources strip, browse pane with type/tag/query filter + preview, installed pane with update-available badges + uninstall). `registry.go`, `paths.go`, `app.go`, `frontend/src/components/{SettingsModal,RegistryPanel}.tsx`, `frontend/src/shell/TitleBar.tsx`, `docs/registry-format.md`, registry repo skeleton.
+- **TD27** — Chat debug mode. `ChatService.StartStream` / `StartSessionStream` take a `debug bool`; when on, plain `runStream` and both agent loops emit per-iteration `chat:debug:request:<id>` (baseURL + full body sent to llama-server, including `tools[]` schema for native mode) and `chat:debug:raw:<id>` (raw model content + finishReason + parsed tool_calls) before any frontend post-processing (splitThinking / sanitize / markdown). Events are gated by the flag so non-debug streams stay quiet. Frontend: UI-local `debug` toggle pill in the chat header (sticks for tab lifetime, not persisted), wired through `ChatStream` / `SessionChatStream`. Per-message `DebugPanel` with one collapsible block per agent-loop iteration, request/raw subsections each independently togglable. Payloads ephemeral — not persisted to JSONL. `chat.go`, `agent_loop.go`, `app.go`, `frontend/src/tabs/ChatTab.tsx`.
 - **TD31 / TD32** — Model family metadata + family-aware mode prompts. `Family` records (id, chat-template hint, reasoning token, sampling defaults) live in `~/.config/llm-workbench/families/`; bundled seed for qwen3 / gemma3 / gemma4 / llama3 / deepseek-r1 / mistral. Profile gains `family` + `family_version`; GGUF mini-parser drives a one-click Detect button; Servers tab groups profiles by family. ModeService template resolver tries `<id>.<family>.<version>.system.md` → `<id>.<family>.system.md` → `<id>.system.md` so authors can ship family-tuned prompts without TOML changes. Mode TOML carries advisory `recommended_for = [...]`; ChatTab picker renders a soft "!" warning when active family isn't covered. `family.go`, `family_seed.go`, `families/*.toml`, `gguf.go`, `profile.go`, `mode.go`, `agent.go`, `chat.go`, `frontend/src/components/ProfileForm.tsx`, `frontend/src/tabs/ServersTab.tsx`, `frontend/src/tabs/ChatTab.tsx`, `docs/prompt-variables.md`.
 - **TD25** — Global modes alongside project overrides. `SaveMode(scope, projectID, modeID, def, template)` — `scope="global"` routes to `<globalModesDir>/`, `scope="project"` (default) to `<project>/.llm-workshop/modes/`. New `App.RemoveProjectModeOverride(projectID, modeID)` deletes the project-local `.toml` + `.system.md` so the resolver falls back to global/builtin. Refactored `saveProjectModeFile` to thin wrapper over shared `saveModeFileToDir`. ModesPanel: "Save to: project / global" select (defaults to current mode's source — global for builtin/global, project for project overrides); "project override" badge in the toolbar when `selected.source==="project"`; "remove override" button next to Save (with a fallback-aware confirm dialog). Resolver precedence + global seeding already shipped earlier — TD25 just adds the write path + UI. `mode.go` (saveGlobalModeFile / removeProjectModeOverride / saveModeFileToDir refactor), `app.go` (binding scope param + RemoveProjectModeOverride), `mode_save_test.go` (`TestSaveGlobalModeFile`, `TestRemoveProjectModeOverride`), `frontend/src/tabs/LabTab.tsx` (scope state + badge + remove button), regenerated `frontend/wailsjs/go/main/App.*`.
 - **TD26** — Agent tool `make_directory` (mkdir -p semantics, sandbox via `FileService.resolveSafe`, refuses project state dir). Registered in `RegisterBuiltinTools`; added to `agent` + `auto-edit` mode whitelists; gated by approval as a write tool (modal shows "Create directory: <path>" instead of a diff). Existing dir = no-op (`created: false`). `file.go` (`MakeDirectory`), `agent.go` (`makeDirectoryTool`), `approval.go` (`writeTools`), `agent_loop.go` (pre-fill `Path`), `modes/agent.toml` + `agent.system.md` + `auto-edit.toml` + `auto-edit.system.md`, `frontend/src/tabs/ChatTab.tsx` (chip icon + summary), `frontend/src/components/ApprovalModal.tsx` (path-only branch).

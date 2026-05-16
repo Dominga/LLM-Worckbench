@@ -890,21 +890,21 @@ func (a *App) ServerStatus() Status {
 
 // ──────────────────────────── Chat ──────────────────────────────────
 
-func (a *App) ChatStream(profileID string, messages []ChatMessage, temperature float64) (StreamHandle, error) {
+func (a *App) ChatStream(profileID string, messages []ChatMessage, temperature float64, debug bool) (StreamHandle, error) {
 	if a.chat == nil {
 		return StreamHandle{}, fmt.Errorf("chat service not initialized")
 	}
-	return a.chat.StartStream(profileID, messages, temperature)
+	return a.chat.StartStream(profileID, messages, temperature, debug)
 }
 
 // SessionChatStream is the session-bound entry point. The user message is
 // appended to the JSONL, and the assistant response is persisted on
 // completion.
-func (a *App) SessionChatStream(projectID, sessionID, userText string, temperature float64) (StreamHandle, error) {
+func (a *App) SessionChatStream(projectID, sessionID, userText string, temperature float64, debug bool) (StreamHandle, error) {
 	if a.chat == nil {
 		return StreamHandle{}, fmt.Errorf("chat service not initialized")
 	}
-	return a.chat.StartSessionStream(projectID, sessionID, userText, temperature)
+	return a.chat.StartSessionStream(projectID, sessionID, userText, temperature, debug)
 }
 
 func (a *App) ChatCancel(streamID string) {

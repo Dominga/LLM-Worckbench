@@ -126,7 +126,7 @@ func (c *ChatService) resolveBaseURL(profileID string) (string, error) {
 // StartStream begins a one-shot streaming completion. profileID may be
 // empty to use the default chat profile. No persistence — caller manages
 // message history.
-func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temperature float64) (StreamHandle, error) {
+func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temperature float64, debug bool) (StreamHandle, error) {
 	baseURL, err := c.resolveBaseURL(profileID)
 	if err != nil {
 		return StreamHandle{}, err
@@ -138,7 +138,7 @@ func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temp
 	c.mu.Unlock()
 
 	go func() {
-		full, err := c.runStream(streamCtx, streamID, baseURL, messages, temperature)
+		full, err := c.runStream(streamCtx, streamID, baseURL, messages, temperature, debug)
 		// User-initiated cancel = clean stop. Keep partial content,
 		// drop the canceled error so frontend gets chat:done not chat:error.
 		if err != nil && errors.Is(err, context.Canceled) {
@@ -153,7 +153,7 @@ func (c *ChatService) StartStream(profileID string, messages []ChatMessage, temp
 // message to the session's JSONL, streams a reply, and persists the
 // assistant response on completion. Mode and profile come from the
 // session header.
-func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, temperature float64) (StreamHandle, error) {
+func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, temperature float64, debug bool) (StreamHandle, error) {
 	if c.sessions == nil {
 		return StreamHandle{}, fmt.Errorf("session service unavailable")
 	}
@@ -270,15 +270,15 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 			var res AgentLoopResult
 			var e error
 			if wireMode == "react" {
-				res, e = c.streamWithReAct(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+				res, e = c.streamWithReAct(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac, debug)
 			} else {
-				res, e = c.streamWithTools(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac)
+				res, e = c.streamWithTools(streamCtx, streamID, baseURL, msgs, resolved, c.tools, ac, debug)
 			}
 			fullContent = res.FinalContent
 			toolCalls = res.ToolCalls
 			err = e
 		} else {
-			fullContent, err = c.runStream(streamCtx, streamID, baseURL, msgs, temperature)
+			fullContent, err = c.runStream(streamCtx, streamID, baseURL, msgs, temperature, debug)
 		}
 		// User-initiated cancel = clean stop. Persist whatever the
 		// model produced so far, and emit chat:done (not chat:error)
@@ -286,7 +286,12 @@ func (c *ChatService) StartSessionStream(projectID, sessionID, userText string, 
 		if err != nil && errors.Is(err, context.Canceled) {
 			err = nil
 		}
-		if err == nil && fullContent != "" {
+		// Persist even when the final iteration emitted no text — tool
+		// calls alone are still real work the user wants to see on reload
+		// (e.g. gemma4 sometimes runs two tools then stops with an empty
+		// closing turn; without this guard the whole bubble disappears
+		// after hydrate from JSONL).
+		if err == nil && (fullContent != "" || len(toolCalls) > 0) {
 			msg := SessionMessage{
 				Role:      "assistant",
 				Content:   fullContent,
@@ -324,7 +329,7 @@ func (c *ChatService) complete(profileID string, messages []ChatMessage, tempera
 	c.mu.Lock()
 	c.cancels[streamID] = cancel
 	c.mu.Unlock()
-	return c.runStream(ctx, streamID, baseURL, messages, temperature)
+	return c.runStream(ctx, streamID, baseURL, messages, temperature, false)
 }
 
 func (c *ChatService) CancelStream(streamID string) {
@@ -341,7 +346,7 @@ func (c *ChatService) CancelStream(streamID string) {
 // each delta to the frontend as `chat:delta:<id>`. Returns the full
 // accumulated content and any terminal error. Does NOT emit chat:done /
 // chat:error itself; finalize() handles that.
-func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, messages []ChatMessage, temperature float64) (string, error) {
+func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, messages []ChatMessage, temperature float64, debug bool) (string, error) {
 	defer func() {
 		c.mu.Lock()
 		delete(c.cancels, streamID)
@@ -357,6 +362,10 @@ func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, m
 		body["temperature"] = temperature
 	}
 	buf, _ := json.Marshal(body)
+
+	if debug {
+		c.emitDebugRequest(streamID, 0, baseURL, body)
+	}
 
 	url := baseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
@@ -376,15 +385,22 @@ func (c *ChatService) runStream(ctx context.Context, streamID, baseURL string, m
 		b, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 	}
-	return c.parseSSE(streamID, resp.Body)
+	full, pErr := c.parseSSE(streamID, resp.Body, debug, 0)
+	if debug {
+		c.emitDebugRaw(streamID, 0, full, "", nil)
+	}
+	return full, pErr
 }
 
 // parseSSE drains the SSE stream, emitting deltas, and returns the full
-// accumulated text on a clean finish.
-func (c *ChatService) parseSSE(streamID string, body io.Reader) (string, error) {
+// accumulated text on a clean finish. When debug is on, periodically
+// emits chat:debug:raw with the accumulated content so the panel updates
+// live while the model is still thinking.
+func (c *ChatService) parseSSE(streamID string, body io.Reader, debug bool, iter int) (string, error) {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 128*1024), 4*1024*1024)
 	var full strings.Builder
+	lastDebugEmit := time.Now()
 
 	for sc.Scan() {
 		line := sc.Text()
@@ -418,6 +434,10 @@ func (c *ChatService) parseSSE(streamID string, body io.Reader) (string, error) 
 			if ch.Delta.Content != "" {
 				full.WriteString(ch.Delta.Content)
 				c.emit("chat:delta:"+streamID, ch.Delta.Content)
+				if debug && time.Since(lastDebugEmit) >= 150*time.Millisecond {
+					c.emitDebugRaw(streamID, iter, full.String(), "", nil)
+					lastDebugEmit = time.Now()
+				}
 			}
 			if ch.FinishReason != nil {
 				return full.String(), nil
@@ -428,6 +448,43 @@ func (c *ChatService) parseSSE(streamID string, body io.Reader) (string, error) 
 		return full.String(), err
 	}
 	return full.String(), nil
+}
+
+// DebugRequest is the payload sent to the frontend for `chat:debug:request:<id>`
+// when debug mode is on. Captures the exact body shipped to llama-server so
+// the user can inspect templating, tool schemas, and ordering.
+type DebugRequest struct {
+	Iteration int            `json:"iteration"`
+	BaseURL   string         `json:"baseURL"`
+	Body      map[string]any `json:"body"`
+}
+
+// DebugRaw mirrors the model's raw response before any frontend
+// post-processing (splitThinking / markdown / sanitize). For the
+// native-tools wire mode, ToolCalls carries the parsed structured calls
+// since they don't appear in Content.
+type DebugRaw struct {
+	Iteration    int                 `json:"iteration"`
+	Content      string              `json:"content"`
+	FinishReason string              `json:"finishReason,omitempty"`
+	ToolCalls    []map[string]string `json:"toolCalls,omitempty"`
+}
+
+func (c *ChatService) emitDebugRequest(streamID string, iter int, baseURL string, body map[string]any) {
+	c.emit("chat:debug:request:"+streamID, DebugRequest{
+		Iteration: iter,
+		BaseURL:   baseURL,
+		Body:      body,
+	})
+}
+
+func (c *ChatService) emitDebugRaw(streamID string, iter int, content, finish string, toolCalls []map[string]string) {
+	c.emit("chat:debug:raw:"+streamID, DebugRaw{
+		Iteration:    iter,
+		Content:      content,
+		FinishReason: finish,
+		ToolCalls:    toolCalls,
+	})
 }
 
 // finalize emits the terminal event for the stream.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,13 +20,17 @@ type Renderer struct {
 
 func NewRenderer() *Renderer {
 	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM, extension.Strikethrough, extension.Table, extension.TaskList),
+		goldmark.WithExtensions(extension.GFM, extension.Strikethrough, extension.Table, extension.TaskList, MathExt),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(html.WithUnsafe()),
 	)
+	policy := bluemonday.UGCPolicy()
+	// Allow the math span markers produced by MathExt through the sanitizer
+	// so the frontend KaTeX pass can find and replace them.
+	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^math-(inline|display)$`)).OnElements("span")
 	return &Renderer{
 		md:     md,
-		policy: bluemonday.UGCPolicy(),
+		policy: policy,
 	}
 }
 

@@ -36,6 +36,7 @@ import {
   RenderMarkdown,
 } from '../../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+import { renderMathIn } from '../util/katex';
 
 type ChatRole = 'user' | 'assistant';
 type ToolCallChip = {
@@ -51,6 +52,16 @@ type ChatMessage = {
   role: ChatRole;
   content: string;
   toolCalls?: ToolCallChip[];
+  debug?: DebugEntry[];
+};
+
+// TD27: one per agent-loop iteration. Captures the exact body shipped
+// to llama-server (request) and the model's raw response (raw) before
+// any frontend post-processing.
+type DebugEntry = {
+  iteration: number;
+  request?: { baseURL: string; body: any };
+  raw?: { content: string; finishReason?: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> };
 };
 
 type ChatStats = {
@@ -108,6 +119,10 @@ export function ChatTab({
   const [prompt, setPrompt] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [stats, setStats] = useState<ChatStats | null>(null);
+  // TD27: debug toggle is UI-local — sticks for the tab's lifetime only.
+  // When on, backend emits chat:debug:* events with the raw payloads we
+  // ship into a per-message DebugPanel.
+  const [debug, setDebug] = useState(false);
   const streamIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -152,8 +167,17 @@ export function ChatTab({
       return;
     }
     prevSessionIdRef.current = sid;
-    setMessages(
-      activeSessionMessages.map((m, i) => {
+    setMessages((prevLocal) => {
+      // Debug entries (TD27) are ephemeral — not persisted to JSONL —
+      // so they would be wiped on every hydrate (including a Stop press
+      // that triggers refreshActiveSession). Carry them from the latest
+      // local assistant message onto the corresponding hydrated one so
+      // the user can still inspect the last turn after it finishes.
+      const lastLocal = prevLocal[prevLocal.length - 1];
+      const carryDebug =
+        lastLocal && lastLocal.role === 'assistant' ? lastLocal.debug : undefined;
+
+      const hydrated: ChatMessage[] = activeSessionMessages.map((m, i) => {
         let toolCalls: ToolCallChip[] | undefined;
         const raw = (m as any).toolCalls;
         if (raw) {
@@ -180,8 +204,16 @@ export function ChatTab({
           content: m.content,
           toolCalls,
         };
-      }),
-    );
+      });
+
+      if (carryDebug && hydrated.length > 0) {
+        const last = hydrated[hydrated.length - 1];
+        if (last.role === 'assistant') {
+          hydrated[hydrated.length - 1] = { ...last, debug: carryDebug };
+        }
+      }
+      return hydrated;
+    });
   }, [activeProject?.ID, activeSession?.id, activeSessionMessages, streaming]);
 
   // Right pane (Edit / Preview). Mounted only when a project file is
@@ -504,8 +536,8 @@ export function ChatTab({
     try {
       const handle =
         activeProject && sessionForSend
-          ? await SessionChatStream(activeProject.ID, sessionForSend.id, userText, 0.7)
-          : await ChatStream(activeProfileId, [{ role: 'user', content: userText }], 0.7);
+          ? await SessionChatStream(activeProject.ID, sessionForSend.id, userText, 0.7, debug)
+          : await ChatStream(activeProfileId, [{ role: 'user', content: userText }], 0.7, debug);
       const id = handle.streamId;
       streamIdRef.current = id;
 
@@ -515,6 +547,8 @@ export function ChatTab({
       const statsEvent = `chat:stats:${id}`;
       const toolReqEvent = `agent:tool:request:${id}`;
       const toolResEvent = `agent:tool:result:${id}`;
+      const debugReqEvent = `chat:debug:request:${id}`;
+      const debugRawEvent = `chat:debug:raw:${id}`;
 
       // We MUST await onAfterChat (which reloads activeSessionMessages
       // from JSONL) BEFORE flipping streaming=false. Otherwise the
@@ -530,6 +564,8 @@ export function ChatTab({
         EventsOff(statsEvent);
         EventsOff(toolReqEvent);
         EventsOff(toolResEvent);
+        EventsOff(debugReqEvent);
+        EventsOff(debugRawEvent);
         streamIdRef.current = null;
         if (refresh) {
           try {
@@ -597,6 +633,32 @@ export function ChatTab({
           out[lastIdx] = { ...last, toolCalls: calls };
           return out;
         });
+      });
+      // TD27: per-iteration debug events. The backend only emits these
+      // when debug=true was passed into the start call, so the listener
+      // is wired unconditionally and quietly no-ops otherwise.
+      const upsertDebug = (iter: number, patch: Partial<DebugEntry>) => {
+        setMessages((prev) => {
+          const out = prev.slice();
+          const lastIdx = out.length - 1;
+          const last = out[lastIdx];
+          if (!last || last.role !== 'assistant') return prev;
+          const list = (last.debug ?? []).slice();
+          const at = list.findIndex((e) => e.iteration === iter);
+          if (at >= 0) {
+            list[at] = { ...list[at], ...patch };
+          } else {
+            list.push({ iteration: iter, ...patch });
+          }
+          out[lastIdx] = { ...last, debug: list };
+          return out;
+        });
+      };
+      EventsOn(debugReqEvent, (p: { iteration: number; baseURL: string; body: any }) => {
+        upsertDebug(p.iteration, { request: { baseURL: p.baseURL, body: p.body } });
+      });
+      EventsOn(debugRawEvent, (p: { iteration: number; content: string; finishReason?: string; toolCalls?: Array<{ id: string; name: string; arguments: string }> }) => {
+        upsertDebug(p.iteration, { raw: { content: p.content, finishReason: p.finishReason, toolCalls: p.toolCalls } });
       });
     } catch (e: any) {
       notifications.show({ color: 'red', title: 'Chat failed', message: String(e) });
@@ -762,6 +824,20 @@ export function ChatTab({
                 {stats.predicted_n ? ` · ${stats.predicted_n} tok` : ''}
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setDebug((d) => !d)}
+              title="Show the exact request/response payloads on each assistant turn"
+              style={{
+                ...pillStyle('mono'),
+                cursor: 'pointer',
+                border: debug ? `1px solid ${V5.accent}` : `1px solid ${V5.border}`,
+                background: debug ? V5.accent : 'transparent',
+                color: debug ? '#fff' : V5.textMuted,
+              }}
+            >
+              debug {debug ? 'on' : 'off'}
+            </button>
           </div>
         </div>
 
@@ -1492,6 +1568,7 @@ function splitThinking(
 // (render.go). Plain-text fallback until the render returns / if it errors.
 function AssistantMarkdown({ content }: { content: string }) {
   const [html, setHtml] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     let cancelled = false;
     if (!content.trim()) {
@@ -1509,9 +1586,12 @@ function AssistantMarkdown({ content }: { content: string }) {
       cancelled = true;
     };
   }, [content]);
+  useEffect(() => {
+    renderMathIn(ref.current);
+  }, [html]);
   if (html === null) return <div style={{ whiteSpace: 'pre-wrap' }}>{content}</div>;
   if (html === '') return null;
-  return <div className="chat-md" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div ref={ref} className="chat-md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function ThinkingBlock({ text, done, live }: { text: string; done: boolean; live: boolean }) {
@@ -1582,7 +1662,109 @@ function AssistantBubble({
           )
         )}
         {hasChips && <ToolCallChips calls={m.toolCalls!} onOpenFilePath={onOpenFilePath} />}
+        {m.debug && m.debug.length > 0 && <DebugPanel entries={m.debug} />}
       </div>
+    </div>
+  );
+}
+
+// TD27: per-message debug panel. One disclosure per agent-loop iteration,
+// each carrying the exact request body shipped to llama-server and the
+// model's raw response (before splitThinking / markdown / sanitize).
+function DebugPanel({ entries }: { entries: DebugEntry[] }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div style={{ marginTop: 8, fontSize: 11.5, fontFamily: 'ui-monospace, monospace' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          background: 'transparent',
+          border: `1px solid ${V5.borderSoft}`,
+          color: V5.textDim,
+          borderRadius: 6,
+          padding: '2px 8px',
+          cursor: 'pointer',
+        }}
+      >
+        {open ? '▾' : '▸'} debug · {entries.length} iteration{entries.length === 1 ? '' : 's'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {entries.map((e) => (
+            <DebugIteration key={e.iteration} entry={e} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DebugIteration({ entry }: { entry: DebugEntry }) {
+  const [showReq, setShowReq] = useState(true);
+  const [showRaw, setShowRaw] = useState(true);
+  const blockStyle: CSSProperties = {
+    background: V5.surface,
+    border: `1px solid ${V5.borderSoft}`,
+    borderRadius: 6,
+    padding: 8,
+    whiteSpace: 'pre-wrap',
+    overflowX: 'auto',
+    maxHeight: 360,
+  };
+  return (
+    <div style={{ border: `1px solid ${V5.borderSoft}`, borderRadius: 6, padding: 8 }}>
+      <div style={{ color: V5.textMuted, marginBottom: 6 }}>iteration {entry.iteration}</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+        <button
+          type="button"
+          onClick={() => setShowReq((v) => !v)}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${V5.borderSoft}`,
+            color: V5.textDim,
+            borderRadius: 4,
+            padding: '1px 6px',
+            cursor: 'pointer',
+            fontSize: 10.5,
+          }}
+        >
+          {showReq ? '▾' : '▸'} request
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowRaw((v) => !v)}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${V5.borderSoft}`,
+            color: V5.textDim,
+            borderRadius: 4,
+            padding: '1px 6px',
+            cursor: 'pointer',
+            fontSize: 10.5,
+          }}
+        >
+          {showRaw ? '▾' : '▸'} raw
+        </button>
+      </div>
+      {showReq && entry.request && (
+        <div style={blockStyle}>{JSON.stringify(entry.request, null, 2)}</div>
+      )}
+      {showRaw && entry.raw && (
+        <div style={{ ...blockStyle, marginTop: 6 }}>
+          {entry.raw.finishReason && (
+            <div style={{ color: V5.textDim, marginBottom: 4 }}>
+              finish: {entry.raw.finishReason}
+            </div>
+          )}
+          {entry.raw.toolCalls && entry.raw.toolCalls.length > 0 && (
+            <div style={{ color: V5.textDim, marginBottom: 4 }}>
+              tool_calls: {JSON.stringify(entry.raw.toolCalls, null, 2)}
+            </div>
+          )}
+          <div>{entry.raw.content || '(empty)'}</div>
+        </div>
+      )}
     </div>
   );
 }

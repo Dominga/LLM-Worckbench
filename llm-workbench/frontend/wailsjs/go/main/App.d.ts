@@ -14,7 +14,7 @@ export function CancelBuild(arg1:string):Promise<void>;
 
 export function ChatCancel(arg1:string):Promise<void>;
 
-export function ChatStream(arg1:string,arg2:Array<main.ChatMessage>,arg3:number):Promise<main.StreamHandle>;
+export function ChatStream(arg1:string,arg2:Array<main.ChatMessage>,arg3:number,arg4:boolean):Promise<main.StreamHandle>;
 
 export function CreateBuildRecipe(arg1:main.BuildRecipe):Promise<main.BuildRecipe>;
 
@@ -152,7 +152,7 @@ export function SearchProject(arg1:string,arg2:string,arg3:string,arg4:number,ar
 
 export function ServerStatus():Promise<main.Status>;
 
-export function SessionChatStream(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.StreamHandle>;
+export function SessionChatStream(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean):Promise<main.StreamHandle>;
 
 export function SessionMessages(arg1:string,arg2:string):Promise<Array<main.SessionMessage>>;
 

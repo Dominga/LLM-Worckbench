@@ -26,8 +26,8 @@ export function ChatCancel(arg1) {
   return window['go']['main']['App']['ChatCancel'](arg1);
 }
 
-export function ChatStream(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ChatStream'](arg1, arg2, arg3);
+export function ChatStream(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ChatStream'](arg1, arg2, arg3, arg4);
 }
 
 export function CreateBuildRecipe(arg1) {
@@ -302,8 +302,8 @@ export function ServerStatus() {
   return window['go']['main']['App']['ServerStatus']();
 }
 
-export function SessionChatStream(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4);
+export function SessionChatStream(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SessionChatStream'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SessionMessages(arg1, arg2) {

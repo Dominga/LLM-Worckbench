@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader, Text, Stack } from '@mantine/core';
 import { RenderMarkdown } from '../../wailsjs/go/main/App';
+import { renderMathIn } from '../util/katex';
 
 type Props = {
   source: string;
@@ -11,6 +12,11 @@ export function MarkdownPreview({ source, onStats }: Props) {
   const [html, setHtml] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    renderMathIn(containerRef.current);
+  }, [html]);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +59,7 @@ export function MarkdownPreview({ source, onStats }: Props) {
   }
   return (
     <div
+      ref={containerRef}
       className="md-preview"
       style={{
         height: '100%',
